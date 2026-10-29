@@ -3,7 +3,7 @@ import {Geist, Geist_Mono} from "next/font/google";
 import "./globals.css";
 
 import {LAST_COMMIT_HASH, LAST_MODIFIED, LAST_MODIFIED_TIME} from "@/lib/app-info";
-import {OfflineBanner} from "./offline-banner";
+import {OfflineFooterMarker} from "./offline-footer-marker";
 import {ServiceWorkerRegister} from "@/components/pwa/service-worker-register";
 
 const geistSans = Geist({
@@ -75,17 +75,19 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <script dangerouslySetInnerHTML={{__html: themeInitScript}}/>
     </head>
     <body className="min-h-full flex flex-col">
-    <OfflineBanner/>
     {children}
     <footer className="mt-auto border-t">
-        {LAST_MODIFIED && (
-            <p
-                className="text-muted-foreground mx-auto w-full max-w-3xl px-4 py-3 text-xs"
-                title={LAST_COMMIT_HASH ? `Commit ${LAST_COMMIT_HASH}` : undefined}
-            >
-                Last updated {LAST_MODIFIED} {LAST_MODIFIED_TIME}
-            </p>
-        )}
+        <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-4 px-4 py-3 text-xs">
+            <OfflineFooterMarker/>
+            {LAST_MODIFIED && (
+                <p
+                    className="text-muted-foreground whitespace-nowrap"
+                    title={LAST_COMMIT_HASH ? `Commit ${LAST_COMMIT_HASH}` : undefined}
+                >
+                    Last updated {LAST_MODIFIED} {LAST_MODIFIED_TIME}
+                </p>
+            )}
+        </div>
     </footer>
     <ServiceWorkerRegister/>
     </body>
