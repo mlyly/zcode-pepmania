@@ -6,6 +6,7 @@
  */
 import type {Medication, Schedule} from "@/lib/db/types";
 import {convertUnit, formatNumber, massToMg, mgToMass, roundAmount,} from "@/lib/units";
+import {scheduleCadenceLabel} from "@/lib/scheduling/occurrences";
 
 // ---------------------------------------------------------------------------
 // Reconstitution (peptides)
@@ -129,17 +130,12 @@ export function activeSchedulesFor(schedules: Schedule[], medicationId: string):
     return schedules.filter((s) => s.medicationId === medicationId && s.active);
 }
 
+/**
+ * Cadence label (delegates to the scheduling module so the two never drift):
+ * "Daily", "Mon & Fri" (weekly days-of-week), "Every 3 days".
+ */
 export function scheduleFrequencyLabel(schedule: Schedule): string {
-    switch (schedule.frequencyType) {
-        case "daily":
-            return "Daily";
-        case "weekly":
-            return "Weekly";
-        case "custom_interval":
-            return schedule.intervalDays && schedule.intervalDays > 0
-                ? `Every ${schedule.intervalDays} days`
-                : "Custom";
-    }
+    return scheduleCadenceLabel(schedule);
 }
 
 /**
@@ -162,7 +158,7 @@ export function dailyAmountInUnit(
             schedule.frequencyType === "daily"
                 ? 1
                 : schedule.frequencyType === "weekly"
-                    ? 1 / 7
+                    ? Math.max(1, schedule.weekdays?.length ?? 1) / 7
                     : schedule.intervalDays && schedule.intervalDays > 0
                         ? 1 / schedule.intervalDays
                         : null;

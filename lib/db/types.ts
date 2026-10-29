@@ -56,16 +56,32 @@ export interface Medication {
 
 export type FrequencyType = "daily" | "weekly" | "custom_interval";
 
+/** Calendar weekday, 0 = Sunday … 6 = Saturday. */
+export type Weekday = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+
+/**
+ * v3: `startDate` is a local calendar date ("YYYY-MM-DD"), `weekdays` selects
+ * specific days-of-week for the "weekly" frequency (the v3 migration backfills
+ * it from `startDate` for pre-v3 rows).
+ */
 export interface Schedule {
     id: string;
     medicationId: string;
     doseAmount: number;
     unit: DoseUnit;
     frequencyType: FrequencyType;
-    /** Required when frequencyType === "custom_interval". */
+    /**
+     * Days of week that fire when frequencyType === "weekly"
+     * (0 = Sunday … 6 = Saturday). Pre-v3 "weekly" rows are backfilled with
+     * the weekday of their `startDate`.
+     */
+    weekdays?: Weekday[];
+    /** Whole days between doses; required when frequencyType === "custom_interval". */
     intervalDays?: number;
-    timeOfDay: string; // "HH:MM"
-    startDate: string; // ISO date
+    /** Local time of day, "HH:MM". */
+    timeOfDay: string;
+    /** First day the schedule is due, local calendar date "YYYY-MM-DD". */
+    startDate: string;
     active: boolean;
 }
 
@@ -75,7 +91,14 @@ export interface DoseLog {
     scheduleId?: string;
     doseAmount: number;
     unit: DoseUnit;
-    timestamp: string; // ISO date string
+    /** ISO datetime — when the dose was actually taken. */
+    timestamp: string;
+    /**
+     * v3: ISO datetime of the scheduled occurrence this log completed. Set
+     * when logging from the checklist/calendar; legacy and ad-hoc logs omit
+     * it and match occurrences by schedule + same calendar day.
+     */
+    scheduledFor?: string;
     notes?: string;
 }
 

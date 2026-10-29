@@ -69,8 +69,8 @@ async function main() {
     // ------------------------------------------------------------------ v2
     const result = await ensureDatabase();
     check(
-        "fresh database stamps schema v2",
-        result.to === LATEST_SCHEMA_VERSION && LATEST_SCHEMA_VERSION === 2,
+        "fresh database stamps schema v3",
+        result.to === LATEST_SCHEMA_VERSION && LATEST_SCHEMA_VERSION === 3,
         `got ${result.to}`
     );
 
@@ -113,7 +113,11 @@ async function main() {
     const migrated = await runMigrations();
     const afterMigration = await db.medications.toArray();
     const byId = new Map(afterMigration.map((m) => [m.id, m]));
-    check("migration reports v1 → v2", migrated.from === 1 && migrated.to === 2);
+    check(
+        "migration reports v1 → v3 (v2 + v3 applied)",
+        migrated.from === 1 && migrated.to === 3,
+        `got ${migrated.from} → ${migrated.to}`
+    );
     check(
         "legacy 'medication' remapped to 'pill'",
         byId.get("legacy-1")?.type === "pill",

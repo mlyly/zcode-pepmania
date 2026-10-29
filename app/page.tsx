@@ -1,22 +1,27 @@
 import Link from "next/link";
-import {ArrowUpRight, Pill, Settings} from "lucide-react";
+import {ArrowUpRight, CalendarCheck2, Pill, Settings} from "lucide-react";
 
 import {Button} from "@/components/ui/button";
 import {StatusBadges, StorageStatus} from "@/components/app/storage-status";
 import {Card, CardContent, CardDescription, CardHeader, CardTitle} from "@/components/ui/card";
+import {DashboardChecklist} from "@/components/scheduling/dashboard-checklist";
 
 const modules: {
     title: string;
     description: string;
     /** Route for implemented modules; planned ones render without a link. */
-    href?: "/medications";
+    href?: "/medications" | "/schedules";
 }[] = [
+    {
+        title: "Quick Log",
+        description: "One-tap completion of today's scheduled doses, with make-up logging.",
+        href: "/schedules",
+    },
     {
         title: "Active Inventory",
         description: "Compact status cards with low-stock badges.",
         href: "/medications",
     },
-    {title: "Quick Log", description: "One-tap completion of today's scheduled doses."},
     {title: "Pharmacokinetics", description: "Concentration decay curves, multi-medication overlay."},
     {title: "Body Metrics", description: "Custom measurements with quick logging."},
 ];
@@ -30,6 +35,12 @@ export default function Home() {
                       Peptimania
                   </h1>
                   <nav className="flex items-center gap-1">
+                      <Button asChild variant="ghost" size="sm">
+                          <Link href="/schedules">
+                              <CalendarCheck2 className="size-4" aria-hidden/>
+                              Schedules
+                          </Link>
+                      </Button>
                       <Button asChild variant="ghost" size="sm">
                           <Link href="/medications">
                               <Pill className="size-4" aria-hidden/>
@@ -54,12 +65,16 @@ export default function Home() {
           <main className="flex w-full max-w-3xl flex-col gap-4">
               <StorageStatus/>
 
+              {/* Live "Today's Doses" checklist (Quick Log) — the dashboard's
+                  working module. Boots the local DB itself. */}
+              <DashboardChecklist manageHref="/schedules"/>
+
               <Card>
                   <CardHeader>
                       <CardTitle className="text-base">Dashboard modules</CardTitle>
                       <CardDescription>
-                          The tracker’s surface — inventory management is live, the rest
-                          is coming.
+                          The tracker’s surface — inventory and scheduling are live, the
+                          rest is coming.
                       </CardDescription>
                   </CardHeader>
                   <CardContent className="grid gap-4 sm:grid-cols-2">

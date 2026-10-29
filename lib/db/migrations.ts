@@ -10,7 +10,7 @@
  * wired up in `migration-manager.ts`.
  */
 import type {PepDatabase} from "./database";
-import type {Medication, MedicationType} from "./types";
+import type {Medication, MedicationType, Schedule, Weekday} from "./types";
 
 export interface Migration {
     version: number;
@@ -30,7 +30,7 @@ export interface SchemaVersion {
     stores: Record<string, string>;
 }
 
-export const LATEST_SCHEMA_VERSION = 2;
+export const LATEST_SCHEMA_VERSION = 3;
 
 /**
  * Index declarations. Primary keys (`id`) are non-indexed UUIDs; other fields
@@ -58,6 +58,16 @@ export const SCHEMA_VERSIONS: SchemaVersion[] = [
         version: 2,
         stores: {},
     },
+    {
+        // v3 adds `Schedule.weekdays` and `DoseLog.scheduledFor` (scheduling
+        // module). `scheduledFor` is indexed for occurrence matching; rows
+        // without it (legacy/ad-hoc logs) simply stay out of the index.
+        version: 3,
+        stores: {
+            doseLogs:
+                "id, medicationId, scheduleId, timestamp, scheduledFor, [medicationId+timestamp]",
+        },
+    },
 ];
 
 /**
@@ -80,12 +90,59 @@ function remapTypeV2(raw: unknown): MedicationType {
     return typeof raw === "string" ? TYPE_REMAP_V2[raw] ?? "other" : "other";
 }
 
+// ---------------------------------------------------------------------------
+// v3 helpers (frozen — migrations must never import from living domain code)
+// ---------------------------------------------------------------------------
+
+interface LocalDateParts {
+    year: number;
+    /** 1–12 */
+    month: number;
+    /** 1–31 */
+    day: number;
+}
+
+/**
+ * Parses a stored schedule `startDate` into LOCAL calendar date parts.
+ * Date-only strings are split on their hyphens (never `new Date()`, which
+ * would interpret them as UTC midnight); full ISO instants use the local
+ * `Date` getters. Returns null for unparseable values.
+ */
+function parseLocalDateParts(value: unknown): LocalDateParts | null {
+    if (typeof value !== "string" || value.trim() === "") return null;
+    const trimmed = value.trim();
+    const dateOnly = /^\d{4}-\d{2}-\d{2}$/.exec(trimmed);
+    if (dateOnly) {
+        const [year, month, day] = dateOnly[0].split("-").map(Number);
+        if (!year || !month || !day || month < 1 || month > 12 || day < 1 || day > 31) {
+            return null;
+        }
+        return {year, month, day};
+    }
+    const date = new Date(trimmed);
+    if (Number.isNaN(date.getTime())) return null;
+    return {
+        year: date.getFullYear(),
+        month: date.getMonth() + 1,
+        day: date.getDate(),
+    };
+}
+
+function formatLocalDateParts(parts: LocalDateParts): string {
+    return `${String(parts.year).padStart(4, "0")}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+}
+
+/** Calendar weekday (0 = Sunday … 6 = Saturday) of local date parts. */
+function weekdayOfParts(parts: LocalDateParts): Weekday {
+    return new Date(parts.year, parts.month - 1, parts.day).getDay() as Weekday;
+}
+
 /**
  * Data migrations, ordered by version. Version 1 has no data migration —
  * fresh databases are created directly at the latest version. The pipeline
  * (pre-migration backup + sequential apply + idempotent resume) is exercised
- * by `scripts/storage-smoke.ts` and `scripts/medications-smoke.ts` and may be
- * extended with further versions.
+ * by `scripts/storage-smoke.ts`, `scripts/medications-smoke.ts` and
+ * `scripts/scheduling-smoke.ts` and may be extended with further versions.
  */
 export const MIGRATIONS: Migration[] = [
     {
@@ -115,6 +172,71 @@ export const MIGRATIONS: Migration[] = [
                 if (row === null || typeof row !== "object") continue;
                 const record = row as { type?: unknown };
                 record.type = remapTypeV2(record.type);
+            }
+        },
+    },
+    {
+        version: 3,
+        description:
+            "Scheduling module: 'weekly' frequencies gain specific days-of-week " +
+            "(`Schedule.weekdays`, backfilled from the schedule's start date); " +
+            "dose logs gain `scheduledFor` for occurrence matching; schedule " +
+            "start dates normalize to local calendar dates (YYYY-MM-DD).",
+        up: async (target) => {
+            const database = target as PepDatabase;
+            await database.transaction("rw", database.schedules, async () => {
+                const schedules = await database.schedules.toArray();
+                for (const schedule of schedules) {
+                    const parts = parseLocalDateParts(schedule.startDate);
+                    const patch: Partial<Schedule> = {};
+                    if (parts) {
+                        const canonical = formatLocalDateParts(parts);
+                        if (schedule.startDate !== canonical) {
+                            patch.startDate = canonical;
+                        }
+                        if (
+                            schedule.frequencyType === "weekly" &&
+                            (!schedule.weekdays || schedule.weekdays.length === 0)
+                        ) {
+                            // Pre-v3 "weekly" meant "once a week, anchored on the
+                            // start date" — pin it to that day-of-week.
+                            patch.weekdays = [weekdayOfParts(parts)];
+                        }
+                    }
+                    if (Object.keys(patch).length > 0) {
+                        await database.schedules.update(schedule.id, patch);
+                    }
+                }
+            });
+        },
+        upSnapshot: (data) => {
+            const snapshot = data as { schedules?: unknown[] };
+            if (!Array.isArray(snapshot.schedules)) return;
+            for (const row of snapshot.schedules) {
+                if (row === null || typeof row !== "object") continue;
+                const record = row as {
+                    frequencyType?: unknown;
+                    weekdays?: unknown;
+                    startDate?: unknown;
+                };
+                const parts = parseLocalDateParts(record.startDate);
+                if (!parts) continue;
+                const canonical = formatLocalDateParts(parts);
+                if (typeof record.startDate === "string" && record.startDate !== canonical) {
+                    record.startDate = canonical;
+                }
+                if (record.frequencyType === "weekly") {
+                    const original = Array.isArray(record.weekdays) ? record.weekdays : [];
+                    const weekdays = original.filter(
+                        (w): w is number => typeof w === "number" && w >= 0 && w <= 6
+                    );
+                    if (weekdays.length === 0) {
+                        record.weekdays = [weekdayOfParts(parts)];
+                    } else if (weekdays.length !== original.length) {
+                        // Invalid entries (out of range) were dropped.
+                        record.weekdays = weekdays;
+                    }
+                }
             }
         },
     },
