@@ -2,6 +2,7 @@ import type {Metadata, Viewport} from "next";
 import {Geist, Geist_Mono} from "next/font/google";
 import "./globals.css";
 
+import {LAST_COMMIT_HASH, LAST_MODIFIED, LAST_MODIFIED_TIME} from "@/lib/app-info";
 import {OfflineBanner} from "./offline-banner";
 import {ServiceWorkerRegister} from "@/components/pwa/service-worker-register";
 
@@ -76,6 +77,16 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     <body className="min-h-full flex flex-col">
     <OfflineBanner/>
     {children}
+    <footer className="mt-auto border-t">
+        {LAST_MODIFIED && (
+            <p
+                className="text-muted-foreground mx-auto w-full max-w-3xl px-4 py-3 text-xs"
+                title={LAST_COMMIT_HASH ? `Commit ${LAST_COMMIT_HASH}` : undefined}
+            >
+                Last updated {LAST_MODIFIED} {LAST_MODIFIED_TIME}
+            </p>
+        )}
+    </footer>
     <ServiceWorkerRegister/>
     </body>
     </html>
