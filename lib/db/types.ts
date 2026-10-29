@@ -1,26 +1,50 @@
 /**
  * Core data schemas (see AGENTS.md §3). All timestamps are ISO strings.
+ *
+ * Canonical domain constants (type/unit vocabularies) live in
+ * `lib/medications/constants.ts`; the migration layer keeps its own frozen
+ * copies so schema history never depends on evolving code.
  */
 
-export type MedicationType = "peptide" | "medication" | "supplement";
-export type DoseUnit = "mg" | "mcg" | "IU";
+/** Mass-style dose units (convertible to a mg base). */
+export type MassUnit = "mg" | "mcg" | "IU";
+/** Volume dose unit (only convertible via a reconstitution concentration). */
+export type VolumeUnit = "mL";
+export type DoseUnit = MassUnit | VolumeUnit;
+
+export type MedicationType =
+    | "peptide"
+    | "injection"
+    | "pill"
+    | "liquid"
+    | "supplement"
+    | "other";
 
 export interface Medication {
     id: string;
     name: string;
     type: MedicationType;
+    /** Primary unit for doses, inventory quantities and thresholds. */
     unit: DoseUnit;
 
-    /** Optional reconstitution info for vials. */
+    /** Optional reconstitution info for peptides (linked to active schedules). */
     reconstitution?: {
         vialQuantity: number;
-        vialQuantityUnit: "mg" | "mcg" | "IU";
+        vialQuantityUnit: MassUnit;
         bacWaterAmountMl: number;
     };
 
     inventory: {
+        /**
+         * Remaining amount, expressed in `unit`. Derived on every write as
+         * `vialCount × containerSize` — never typed in directly.
+         */
         currentQuantity: number;
+        /** Vials / bottles / packs on hand. */
         vialCount: number;
+        /** Amount per container (unit size), in `unit` — e.g. a 5 mg vial. */
+        containerSize?: number;
+        /** Low-stock alert threshold, in `unit`. */
         lowStockThreshold?: number;
     };
 

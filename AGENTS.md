@@ -55,24 +55,33 @@ To handle future app updates without breaking user data:
 
 ### 3.1 Medication & Inventory
 
+> **v2 (current):** types are granular (`peptide`/`injection`/`pill`/`liquid`/`supplement`/`other`),
+> dose units include `mL`, and inventory tracks an optional per-container size. The v1 → v2
+> migration (see `lib/db/migrations.ts`) remaps the legacy generic `"medication"` type to `"pill"`
+> and preserves an automatic pre-migration backup.
+
 ```ts
+type MassUnit = "mg" | "mcg" | "IU";
+type DoseUnit = MassUnit | "mL"; // volume — only converts via reconstitution
+
 interface Medication {
     id: string; // UUID
     name: string; // e.g., "Semaglutide", "BPC-157"
-    type: 'peptide' | 'medication' | 'supplement';
-    unit: 'mg' | 'mcg' | 'IU';
+  type: "peptide" | "injection" | "pill" | "liquid" | "supplement" | "other";
+  unit: DoseUnit; // primary unit for doses, inventory and thresholds
 
-    // Reconstitution Info (Optional)
+  // Reconstitution Info (peptides only; linked to active schedules for dose volumes)
     reconstitution?: {
         vialQuantity: number;      // e.g., 5 (mg)
-        vialQuantityUnit: 'mg' | 'mcg' | 'IU';
-        bacWaterAmountMl: number;  // e.g., 2 (ml)
+      vialQuantityUnit: MassUnit;
+      bacWaterAmountMl: number;  // e.g., 2 (ml) → concentration 2.5 mg/mL
     };
 
     // Inventory Tracking
     inventory: {
         currentQuantity: number; // In selected unit (e.g., mg)
-        vialCount: number;
+      vialCount: number;       // vials / bottles / packs on hand
+      containerSize?: number;  // amount per container (unit size), in `unit`
         lowStockThreshold?: number;
     };
 

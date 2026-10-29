@@ -1,13 +1,22 @@
 import Link from "next/link";
-import {Settings} from "lucide-react";
+import {ArrowUpRight, Pill, Settings} from "lucide-react";
 
 import {Button} from "@/components/ui/button";
 import {StatusBadges, StorageStatus} from "@/components/app/storage-status";
 import {Card, CardContent, CardDescription, CardHeader, CardTitle} from "@/components/ui/card";
 
-const modules = [
+const modules: {
+    title: string;
+    description: string;
+    /** Route for implemented modules; planned ones render without a link. */
+    href?: "/medications";
+}[] = [
+    {
+        title: "Active Inventory",
+        description: "Compact status cards with low-stock badges.",
+        href: "/medications",
+    },
     {title: "Quick Log", description: "One-tap completion of today's scheduled doses."},
-    {title: "Active Inventory", description: "Compact status cards with low-stock badges."},
     {title: "Pharmacokinetics", description: "Concentration decay curves, multi-medication overlay."},
     {title: "Body Metrics", description: "Custom measurements with quick logging."},
 ];
@@ -20,12 +29,20 @@ export default function Home() {
                   <h1 className="text-2xl font-semibold tracking-tight">
                       Peptimania
                   </h1>
-                  <Button asChild variant="ghost" size="sm">
-                      <Link href="/settings">
-                          <Settings className="size-4" aria-hidden/>
-                          Settings
-                      </Link>
-                  </Button>
+                  <nav className="flex items-center gap-1">
+                      <Button asChild variant="ghost" size="sm">
+                          <Link href="/medications">
+                              <Pill className="size-4" aria-hidden/>
+                              Medications
+                          </Link>
+                      </Button>
+                      <Button asChild variant="ghost" size="sm">
+                          <Link href="/settings">
+                              <Settings className="size-4" aria-hidden/>
+                              Settings
+                          </Link>
+                      </Button>
+                  </nav>
               </div>
               <p className="text-muted-foreground max-w-2xl">
                   A privacy-first peptide &amp; medication tracker. Everything runs in
@@ -41,16 +58,40 @@ export default function Home() {
                   <CardHeader>
                       <CardTitle className="text-base">Dashboard modules</CardTitle>
                       <CardDescription>
-                          Planned surface for the tracker — infrastructure is in place.
+                          The tracker’s surface — inventory management is live, the rest
+                          is coming.
                       </CardDescription>
                   </CardHeader>
                   <CardContent className="grid gap-4 sm:grid-cols-2">
-                      {modules.map((m) => (
-                          <div key={m.title} className="rounded-lg border p-3">
-                              <p className="text-sm font-medium">{m.title}</p>
-                              <p className="text-muted-foreground mt-1 text-sm">{m.description}</p>
-                          </div>
-                      ))}
+                      {modules.map((m) => {
+                          const body = (
+                              <>
+                                  <p className="text-sm font-medium">{m.title}</p>
+                                  <p className="text-muted-foreground mt-1 text-sm">
+                                      {m.description}
+                                  </p>
+                              </>
+                          );
+                          return m.href ? (
+                              <Link
+                                  key={m.title}
+                                  href={m.href}
+                                  className="rounded-lg border p-3 transition-colors hover:bg-accent/50"
+                              >
+                                  <div className="flex items-start justify-between gap-2">
+                                      <div className="min-w-0">{body}</div>
+                                      <ArrowUpRight
+                                          className="text-muted-foreground size-4 shrink-0"
+                                          aria-hidden
+                                      />
+                                  </div>
+                              </Link>
+                          ) : (
+                              <div key={m.title} className="rounded-lg border p-3">
+                                  {body}
+                              </div>
+                          );
+                      })}
                   </CardContent>
               </Card>
       </main>

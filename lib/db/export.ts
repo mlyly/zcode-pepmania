@@ -4,6 +4,9 @@ import {db} from "./database";
 import {LATEST_SCHEMA_VERSION, MIGRATIONS} from "./migrations";
 import type {DatabaseSnapshot} from "./types";
 
+// Re-exported for callers that need the migration contract alongside exports.
+export type {Migration} from "./migrations";
+
 export const EXPORT_APP_ID = "pepmania-pwa";
 export const EXPORT_FORMAT_VERSION = 1;
 
@@ -139,9 +142,9 @@ export async function validateExportPayload(raw: string): Promise<ExportPayload>
         // Future-compatible hook: each Migration may declare a pure-data
         // `upSnapshot` used to upgrade import payloads older than the app.
         const promotable = MIGRATIONS.every(
-            (m) => m.version > schemaVersion && typeof (m as MigrationLike).upSnapshot === "function"
+            (m) => m.version > schemaVersion && typeof m.upSnapshot === "function"
         );
-        if (!promotable && schemaVersion < LATEST_SCHEMA_VERSION) {
+        if (!promotable) {
             throw new ImportError(
                 `Export schema v${schemaVersion} is older than the app (v${LATEST_SCHEMA_VERSION}). Upgrade the payload's data in the app first.`,
                 "unknown-format"
@@ -150,8 +153,7 @@ export async function validateExportPayload(raw: string): Promise<ExportPayload>
         // Apply snapshot migrations oldest → newest.
         for (const m of MIGRATIONS) {
             if (m.version > schemaVersion) {
-                const withSnapshot = m as MigrationLike;
-                withSnapshot.upSnapshot?.(payload.data);
+                m.upSnapshot?.(payload.data);
                 payload.data.schemaVersion = m.version;
             }
         }
@@ -226,12 +228,6 @@ export function summarizePayload(payload: ExportPayload): ImportSummary {
     };
 }
 
-
-type MigrationLike = {
-    version: number;
-    up: (db: unknown) => Promise<void> | void;
-    upSnapshot?: (data: unknown) => void;
-};
 
 /** Triggers a browser download of a plain-text/JSON file. 100% local. */
 export function downloadJsonString(content: string, filename: string): void {
