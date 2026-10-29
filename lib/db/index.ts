@@ -5,6 +5,8 @@ export * from "./database";
 export * from "./migrations";
 export * from "./migration-manager";
 export * from "./export";
+export * from "./cryptography";
+export * from "./wipe";
 
 let inFlight: Promise<MigrationResult> | null = null;
 

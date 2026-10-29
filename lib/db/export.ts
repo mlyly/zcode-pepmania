@@ -183,6 +183,49 @@ export async function writeImportedPayload(
     });
 }
 
+/** Counts each domain table so the UI can show what an export will include. */
+export interface ExportStats {
+    medications: number;
+    schedules: number;
+    doseLogs: number;
+    measurementTypes: number;
+    measurementLogs: number;
+}
+
+export async function getExportStats(): Promise<ExportStats> {
+    const [medications, schedules, doseLogs, measurementTypes, measurementLogs] =
+        await Promise.all([
+            db.medications.count(),
+            db.schedules.count(),
+            db.doseLogs.count(),
+            db.measurementTypes.count(),
+            db.measurementLogs.count(),
+        ]);
+    return {medications, schedules, doseLogs, measurementTypes, measurementLogs};
+}
+
+export interface ImportSummary {
+    exportedAt: string;
+    schemaVersion: number;
+    /** N undefined → not reported by the payload. */
+    counts: Omit<ExportStats, "schemaVersion">;
+}
+
+/** Human-readable preview of a validated payload for the confirmation UI. */
+export function summarizePayload(payload: ExportPayload): ImportSummary {
+    return {
+        exportedAt: payload.exportedAt,
+        schemaVersion: payload.data.schemaVersion ?? 0,
+        counts: {
+            medications: (payload.data.medications ?? []).length,
+            schedules: (payload.data.schedules ?? []).length,
+            doseLogs: (payload.data.doseLogs ?? []).length,
+            measurementTypes: (payload.data.measurementTypes ?? []).length,
+            measurementLogs: (payload.data.measurementLogs ?? []).length,
+        },
+    };
+}
+
 
 type MigrationLike = {
     version: number;
@@ -190,16 +233,28 @@ type MigrationLike = {
     upSnapshot?: (data: unknown) => void;
 };
 
-/** Triggers a browser download of the given payload as a JSON file. */
-export function downloadExport(payload: ExportPayload): void {
-    const blob = new Blob([JSON.stringify(payload, null, 2)], {
-        type: "application/json",
-    });
+/** Triggers a browser download of a plain-text/JSON file. 100% local. */
+export function downloadJsonString(content: string, filename: string): void {
+    const blob = new Blob([content], {type: "application/json"});
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    const stamp = payload.exportedAt.slice(0, 10);
     a.href = url;
-    a.download = `peptimania-backup-${stamp}.json`;
+    a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
+}
+
+/** Triggers a browser download of the given payload as a JSON file. */
+export function downloadExport(payload: ExportPayload): void {
+    downloadJsonString(
+        JSON.stringify(payload, null, 2),
+        exportFilename(payload.exportedAt, false)
+    );
+}
+
+/** Canonical backup file name; encrypted files get the `.enc` marker. */
+export function exportFilename(exportedAtIso: string, encrypted: boolean): string {
+    const stamp = exportedAtIso.slice(0, 10) ||
+        new Date().toISOString().slice(0, 10);
+    return `peptimania-backup-${stamp}${encrypted ? ".enc" : ""}.json`;
 }

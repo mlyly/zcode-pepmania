@@ -1,3 +1,7 @@
+import Link from "next/link";
+import {Settings} from "lucide-react";
+
+import {Button} from "@/components/ui/button";
 import {StatusBadges, StorageStatus} from "@/components/app/storage-status";
 import {Card, CardContent, CardDescription, CardHeader, CardTitle} from "@/components/ui/card";
 
@@ -12,9 +16,17 @@ export default function Home() {
   return (
       <div className="flex flex-1 flex-col items-center gap-8 px-4 py-12">
           <header className="flex w-full max-w-3xl flex-col gap-3">
-              <h1 className="text-2xl font-semibold tracking-tight">
-                  Peptimania
-              </h1>
+              <div className="flex items-center justify-between gap-3">
+                  <h1 className="text-2xl font-semibold tracking-tight">
+                      Peptimania
+                  </h1>
+                  <Button asChild variant="ghost" size="sm">
+                      <Link href="/settings">
+                          <Settings className="size-4" aria-hidden/>
+                          Settings
+                      </Link>
+                  </Button>
+              </div>
               <p className="text-muted-foreground max-w-2xl">
                   A privacy-first peptide &amp; medication tracker. Everything runs in
                   your browser and keeps working offline.
