@@ -1,5 +1,5 @@
 import Link from "next/link";
-import {ArrowUpRight, CalendarCheck2, Pill, Settings} from "lucide-react";
+import {ArrowUpRight, CalendarCheck2, ClipboardList, Pill, Settings} from "lucide-react";
 
 import {Button} from "@/components/ui/button";
 import {StatusBadges, StorageStatus} from "@/components/app/storage-status";
@@ -10,7 +10,7 @@ const modules: {
     title: string;
     description: string;
     /** Route for implemented modules; planned ones render without a link. */
-    href?: "/medications" | "/schedules";
+    href?: "/medications" | "/schedules" | "/dose-logs";
 }[] = [
     {
         title: "Quick Log",
@@ -21,6 +21,11 @@ const modules: {
         title: "Active Inventory",
         description: "Compact status cards with low-stock badges.",
         href: "/medications",
+    },
+    {
+        title: "Dose Log",
+        description: "Day-grouped history of every logged dose — search, filter, edit and re-time.",
+        href: "/dose-logs",
     },
     {title: "Pharmacokinetics", description: "Concentration decay curves, multi-medication overlay."},
     {title: "Body Metrics", description: "Custom measurements with quick logging."},
@@ -45,6 +50,12 @@ export default function Home() {
                           <Link href="/medications">
                               <Pill className="size-4" aria-hidden/>
                               Medications
+                          </Link>
+                      </Button>
+                      <Button asChild variant="ghost" size="sm">
+                          <Link href="/dose-logs">
+                              <ClipboardList className="size-4" aria-hidden/>
+                              Dose Log
                           </Link>
                       </Button>
                       <Button asChild variant="ghost" size="sm">

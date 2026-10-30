@@ -15,6 +15,7 @@ import type {Medication} from "@/lib/db/types";
 import {medicationTypeMeta} from "@/lib/medications/constants";
 import {TIME_SLOTS, timeSlotFor, type TimeSlotMeta} from "@/lib/scheduling/constants";
 import {formatClockTime, formatDay} from "@/lib/scheduling/dates";
+import {prefilledDoseAmount} from "@/lib/scheduling/derived";
 import {dayOccurrences, matchingDoseLog, missedOccurrences, type Occurrence,} from "@/lib/scheduling/occurrences";
 import {deleteDoseLog, logDose, logDoses} from "@/lib/scheduling/service";
 import {formatAmount} from "@/lib/units";
@@ -498,23 +499,6 @@ function localTimeNow(): string {
     return `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
 }
 
-/**
- * Dose prefill for a medication: the dose of its first active schedule (same
- * unit), else "1".
- */
-function prefilledDose(
-    medication: Medication | undefined,
-    data: TrackerData
-): string {
-    if (!medication) return "1";
-    const schedule = data.schedules.find(
-        (s) => s.medicationId === medication.id && s.active
-    );
-    return schedule && schedule.unit === medication.unit
-        ? schedule.doseAmount.toString()
-        : "1";
-}
-
 interface AdHocDoseFormProps {
     data: TrackerData;
     busy: boolean;
@@ -531,7 +515,7 @@ function AdHocDoseForm({data, busy, onLogged, onOpenChange}: AdHocDoseFormProps)
     const first = data.medications[0];
     const [medicationId, setMedicationId] = React.useState(first?.id ?? "");
     const [amount, setAmount] = React.useState(() =>
-        prefilledDose(first, data)
+        String(prefilledDoseAmount(first, data.schedules))
     );
     const [time, setTime] = React.useState(localTimeNow());
     const [notes, setNotes] = React.useState("");
@@ -542,7 +526,7 @@ function AdHocDoseForm({data, busy, onLogged, onOpenChange}: AdHocDoseFormProps)
     const selectMedication = (id: string) => {
         setMedicationId(id);
         const medication = data.medications.find((m) => m.id === id);
-        setAmount(prefilledDose(medication, data));
+        setAmount(String(prefilledDoseAmount(medication, data.schedules)));
     };
 
     const submit = async () => {

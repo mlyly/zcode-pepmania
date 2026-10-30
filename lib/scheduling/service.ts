@@ -15,6 +15,8 @@ import {
     canonicalScheduleInput,
     type DoseLogInput,
     doseLogInputSchema,
+    type DoseLogUpdateInput,
+    doseLogUpdateInputSchema,
     type ScheduleInput,
     scheduleInputSchema,
 } from "./schema";
@@ -122,6 +124,10 @@ export async function listDoseLogs(): Promise<DoseLog[]> {
     return logs.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
 }
 
+export async function getDoseLog(id: string): Promise<DoseLog | undefined> {
+    return db.doseLogs.get(id);
+}
+
 /**
  * Logs a dose. When `scheduledFor` is provided (checklist / calendar logging)
  * the log is pinned to that occurrence; `scheduleId` without `scheduledFor`
@@ -137,9 +143,35 @@ export async function logDose(input: DoseLogInput): Promise<DoseLog> {
         unit: parsed.unit,
         timestamp: parsed.timestamp ?? nowIso(),
         scheduledFor: parsed.scheduledFor,
+        injectionSite: parsed.injectionSite || undefined,
         notes: parsed.notes?.trim() || undefined,
     };
     await db.doseLogs.add(log);
+    return log;
+}
+
+/**
+ * Updates an existing dose log. Medication, amount, unit, timestamp, site
+ * and notes are PUT (unset optional fields clear the stored value), but the
+ * provenance fields `scheduleId` / `scheduledFor` are preserved — they pin
+ * the log to the occurrence it completed, and the checklist's matching
+ * depends on that.
+ */
+export async function updateDoseLog(id: string, input: DoseLogUpdateInput): Promise<DoseLog> {
+    const parsed = doseLogUpdateInputSchema.parse(input);
+    const existing = await db.doseLogs.get(id);
+    if (!existing) throw new Error("Dose log not found — it may have been deleted.");
+
+    const log: DoseLog = {
+        ...existing,
+        medicationId: parsed.medicationId,
+        doseAmount: parsed.doseAmount,
+        unit: parsed.unit,
+        timestamp: parsed.timestamp,
+        injectionSite: parsed.injectionSite || undefined,
+        notes: parsed.notes?.trim() || undefined,
+    };
+    await db.doseLogs.put(log);
     return log;
 }
 
@@ -170,6 +202,7 @@ export async function logDoses(
                 unit: parsed.unit,
                 timestamp,
                 scheduledFor: parsed.scheduledFor,
+                injectionSite: parsed.injectionSite || undefined,
                 notes: parsed.notes?.trim() || undefined,
             };
             await db.doseLogs.add(log);

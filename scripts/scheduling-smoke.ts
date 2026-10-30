@@ -7,7 +7,7 @@
  * Exercises: local-time date helpers (DST-safe day math), time-of-day slot
  * tiling, the occurrence engine (frequency firing, expansion, status windows,
  * log matching, labels), the zod schemas (canonical + form, slot resolution,
- * weekday/interval normalization), the v3 data migration (weekday backfill +
+ * weekday/interval normalization), the v2 → v4 migration path (v3 weekday backfill +
  * start-date normalization, both the live `up` and the import `upSnapshot`
  * twin), import promotion of old exports, and the Dexie service (schedule
  * CRUD + dose logging with occurrence pinning).
@@ -739,7 +739,7 @@ async function main() {
         !doseLogInputSchema.safeParse({medicationId: med, doseAmount: 1, unit: "mcg", notes: "x".repeat(2001)}).success
     );
 
-    // ================================================================ v3 migration
+    // ============================================================ v2 → v4 migration
     await ensureDatabase();
 
     // Simulate a v2-era database: meta says 2, with legacy weekly rows
@@ -777,8 +777,8 @@ async function main() {
 
     const migrated = await runMigrations();
     check(
-        "runMigrations reports v2 → v3 (applies only v3)",
-        migrated.from === 2 && migrated.to === 3 && migrated.applied.join() === "3",
+        "runMigrations reports v2 → v4 (applies v3 + v4)",
+        migrated.from === 2 && migrated.to === 4 && migrated.applied.join() === "3,4",
         `got ${migrated.from} → ${migrated.to} (${migrated.applied.join()})`
     );
 
@@ -838,7 +838,7 @@ async function main() {
     check("upSnapshot leaves a canonical start date as-is", s3.startDate === "2026-01-01" && s3.weekdays === undefined);
 
     // An old (v2) export round-trips through the import validator, promoted
-    // to v3 by the snapshot migration.
+    // to v4 by the snapshot migrations.
     await Promise.all([db.schedules.clear(), db.doseLogs.clear()]);
     await db.schedules.bulkPut([
         {
@@ -899,7 +899,7 @@ async function main() {
         currentPayload.checksum
     );
     check(
-        "a current (v3) export round-trips through the import validator",
+        "a current (v4) export round-trips through the import validator",
         (await validateExportPayload(JSON.stringify(currentPayload))).data.schemaVersion === LATEST_SCHEMA_VERSION
     );
 

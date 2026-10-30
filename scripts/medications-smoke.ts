@@ -69,8 +69,8 @@ async function main() {
     // ------------------------------------------------------------------ v2
     const result = await ensureDatabase();
     check(
-        "fresh database stamps schema v3",
-        result.to === LATEST_SCHEMA_VERSION && LATEST_SCHEMA_VERSION === 3,
+        "fresh database stamps schema v4",
+        result.to === LATEST_SCHEMA_VERSION && LATEST_SCHEMA_VERSION === 4,
         `got ${result.to}`
     );
 
@@ -114,8 +114,8 @@ async function main() {
     const afterMigration = await db.medications.toArray();
     const byId = new Map(afterMigration.map((m) => [m.id, m]));
     check(
-        "migration reports v1 → v3 (v2 + v3 applied)",
-        migrated.from === 1 && migrated.to === 3,
+        "migration reports v1 → v4 (v2 + v3 + v4 applied)",
+        migrated.from === 1 && migrated.to === 4,
         `got ${migrated.from} → ${migrated.to}`
     );
     check(
@@ -150,10 +150,10 @@ async function main() {
         `got ${snapshot.medications.map((m) => m.type).join(",")}`
     );
 
-    // Exports must still round-trip at v2.
+    // Exports must still round-trip at the current schema.
     const payload = await buildExportPayload();
     check(
-        "export carries schema v2",
+        "export carries the current schema",
         payload.data.schemaVersion === LATEST_SCHEMA_VERSION &&
         payload.data.medications.length === 3
     );

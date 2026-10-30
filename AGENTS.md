@@ -114,6 +114,9 @@ interface DoseLog {
     doseAmount: number;
     unit: 'mg' | 'mcg' | 'IU';
     timestamp: string; // ISO Date String
+  // v4: optional injection site (e.g. "Abdomen") — free text; the form
+  // offers presets plus an "other" free-text field.
+  injectionSite?: string;
     notes?: string;
 }
 ```
