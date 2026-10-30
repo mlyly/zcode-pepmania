@@ -4,20 +4,24 @@
  *
  *   npx tsx scripts/charting-smoke.ts
  *
- * Covers: calendar time windows (inclusive of the projection tail), display
- * unit conversion (mcg/mg/IU), wide-row chart shaping, instant lookups for
- * the "combined now" stat, and end-to-end rendering through the PK engine.
+ * Covers: the three-slot time window (now pinned at the start of the third
+ * slot), display unit conversion (mcg/mg/IU), wide-row chart shaping,
+ * instant lookups for the "combined now" stat, upcoming-dose collection in
+ * the projection slot, and end-to-end rendering through the PK engine.
  */
-import type {DoseLog, Medication} from "../lib/db/types";
+import type {DoseLog, Medication, Schedule} from "../lib/db/types";
 import {
     buildConcentrationChartRows,
     CHART_RANGES,
     chartRangeById,
+    collectUpcomingDoses,
     concentrationAtInstant,
     concentrationSuffix,
     convertConcentration,
     formatConcentration,
     formatConcentrationValue,
+    formatDoseAmount,
+    historySlotSplitMs,
     resolveChartWindow,
     seriesKey,
 } from "../lib/pharmacokinetics/charting";
@@ -59,19 +63,45 @@ function main() {
 
     const dayWindow = resolveChartWindow(day, NOW);
     check(
-        "day window covers today through tomorrow's local midnight",
-        dayWindow.start.getTime() === d(2026, 1, 15).getTime() &&
-        dayWindow.end.getTime() === d(2026, 1, 16).getTime()
+        "day window = 24h split two-thirds before now, one-third after",
+        dayWindow.start.getTime() === d(2026, 1, 14, 18, 30).getTime() &&
+        dayWindow.end.getTime() === d(2026, 1, 15, 18, 30).getTime()
     );
     const weekWindow = resolveChartWindow(chartRangeById("week"), NOW);
     check(
-        "week window spans 7 local calendar days ending tomorrow",
-        weekWindow.start.getTime() === d(2026, 1, 9).getTime() &&
-        weekWindow.end.getTime() === d(2026, 1, 16).getTime()
+        "week window pins now at the 2/3 mark of a 7-day span",
+        (() => {
+            const s = weekWindow.start.getTime();
+            const e = weekWindow.end.getTime();
+            const t = NOW.getTime();
+            return near((t - s) / (e - s), 2 / 3, 1e-9) && near((e - s) / (24 * H), 7);
+        })()
+    );
+    check(
+        "now sits at the start of the third slot in every range",
+        CHART_RANGES.every((preset) => {
+            const w = resolveChartWindow(preset, NOW);
+            return near(
+                (NOW.getTime() - w.start.getTime()) / (w.end.getTime() - w.start.getTime()),
+                2 / 3,
+                1e-9
+            );
+        })
+    );
+    check(
+        "history slot split halves the region behind now",
+        (() => {
+            const s = weekWindow.start.getTime();
+            const split = historySlotSplitMs(s, NOW.getTime());
+            return (
+                near(NOW.getTime() - split, split - s) &&
+                near(weekWindow.end.getTime() - NOW.getTime(), NOW.getTime() - split)
+            );
+        })()
     );
     const sixWindow = resolveChartWindow(six, NOW);
     check(
-        "6-month window spans 180 local days",
+        "6-month window spans 180 days total",
         Math.round((sixWindow.end.getTime() - sixWindow.start.getTime()) / (24 * H)) === 180
     );
 
@@ -185,6 +215,79 @@ function main() {
         "a day-old 1 mg dose reads as ≈500 mcg-equivalent at t½=24h",
         decay !== undefined && near(decay[seriesKey(medication.id)], 500, 0.01),
         String(decay?.[seriesKey(medication.id)])
+    );
+
+    // =============================== upcoming doses in the projection slot
+    const dailyAfternoon: Schedule = {
+        id: "s1",
+        medicationId: medication.id,
+        doseAmount: 1,
+        unit: "mg",
+        frequencyType: "daily",
+        timeOfDay: "14:00",
+        startDate: "2026-01-10",
+        active: true,
+    };
+    // Day window: [Jan 14 18:30, Jan 15 18:30] with now at 10:30 — the
+    // projection slot (now → end) holds exactly the 14:00 occurrence.
+    const scheduled = buildPkConcentrationSeries(
+        {medications: [medication], schedules: [dailyAfternoon], doseLogs: logs},
+        {
+            start: dayWindow.start,
+            end: dayWindow.end,
+            now: NOW,
+            stepMinutes: chartRangeById("day").stepMinutes,
+        }
+    );
+    check(
+        "engine result carries the dose events it modeled",
+        scheduled.events.length > 0 &&
+        scheduled.events.every((event, index) =>
+            index === 0 || scheduled.events[index - 1].timestamp <= event.timestamp
+        )
+    );
+
+    const upcoming = collectUpcomingDoses(scheduled, {
+        fromMs: NOW.getTime(),
+        toMs: dayWindow.end.getTime(),
+        unit: "mcg",
+    });
+    check(
+        "scheduled dose after now lands in the projection slot",
+        upcoming.length === 1 &&
+        upcoming[0].timestamp === d(2026, 1, 15, 14).getTime() &&
+        near(upcoming[0].amountMg, 1) &&
+        upcoming[0].level > 1000,
+        JSON.stringify(upcoming)
+    );
+
+    // An instant later than the dose it flips to past-scheduled: the slot
+    // only ever models what is ahead of the now marker.
+    const nowMoved = d(2026, 1, 15, 15);
+    const moved = buildPkConcentrationSeries(
+        {medications: [medication], schedules: [dailyAfternoon], doseLogs: logs},
+        {
+            start: dayWindow.start,
+            end: dayWindow.end,
+            now: nowMoved,
+            stepMinutes: chartRangeById("day").stepMinutes,
+        }
+    );
+    const upcomingAfterMove = collectUpcomingDoses(moved, {
+        fromMs: nowMoved.getTime(),
+        toMs: dayWindow.end.getTime(),
+        unit: "mcg",
+    });
+    check(
+        "a dose passed by now leaves the upcoming list",
+        upcomingAfterMove.length === 0,
+        JSON.stringify(upcomingAfterMove)
+    );
+    check(
+        "dose amounts format per display unit",
+        formatDoseAmount(0.25, "mcg") === "250 mcg" &&
+        formatDoseAmount(0.25, "mg") === "0.25 mg" &&
+        formatDoseAmount(10, "IU") === "10 IU"
     );
 
     // ---------------------------------------------------------------- summary

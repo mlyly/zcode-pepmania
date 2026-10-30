@@ -3,12 +3,10 @@
  *
  * The PK engine works in dose-equivalent concentration (`mg-eq`, or `mg/L`
  * when a volume of distribution is supplied). These helpers keep the chart
- * layer free of math: calendar windows, display-unit conversion and the
- * wide-row shape Recharts expects for multi-medication overlays.
+ * layer free of math: the three-slot time window, display-unit conversion
+ * and the wide-row shape Recharts expects for multi-medication overlays.
  */
-import {addDays, startOfLocalDay} from "@/lib/scheduling/dates";
-
-import type {PkMedicationSeries, PkSeriesPoint} from "./types";
+import type {PkMedicationSeries, PkResult, PkSeriesPoint,} from "./types";
 
 // ---------------------------------------------------------------------------
 // Time ranges
@@ -32,17 +30,31 @@ export function chartRangeById(id: ChartRangeId): ChartRange {
 }
 
 /**
- * Local-calendar window for a preset: whole days ending at tomorrow's local
- * midnight. Ending after "now" keeps today's remaining scheduled doses in the
- * projection instead of clipping them at the current minute.
+ * Three-slot time window for a preset. The total span (`range.days`) is split
+ * into three equal parts and "now" is pinned to the start of the last slot:
+ * two slots of history behind the Now line, one slot of projection ahead of
+ * it. This gives scheduled future doses a stable region to render in and
+ * keeps the layout at a fixed 2/3 – 1/3 ratio for every range.
  */
 export function resolveChartWindow(
     range: ChartRange,
     now: Date = new Date()
 ): { start: Date; end: Date } {
-    const end = startOfLocalDay(addDays(now, 1));
-    const start = startOfLocalDay(addDays(now, -(range.days - 1)));
-    return {start, end};
+    const nowMs = now.getTime();
+    const spanMs = range.days * 24 * 3_600_000;
+    return {
+        start: new Date(nowMs - (2 / 3) * spanMs),
+        end: new Date(nowMs + (1 / 3) * spanMs),
+    };
+}
+
+/**
+ * The boundary between the two history slots — one-third of the window in
+ * (i.e. halfway between the window start and now). The Now line itself is the
+ * boundary between the second history slot and the projection slot.
+ */
+export function historySlotSplitMs(startMs: number, nowMs: number): number {
+    return startMs + (nowMs - startMs) / 2;
 }
 
 // ---------------------------------------------------------------------------
@@ -224,4 +236,74 @@ export function concentrationAtInstant(
         }
     }
     return points[best].concentration;
+}
+
+// ---------------------------------------------------------------------------
+// Upcoming (projected) doses
+// ---------------------------------------------------------------------------
+
+export interface UpcomingDose {
+    /** Dose event id (`sched:<occurrence key>`). */
+    id: string;
+    medicationId: string;
+    medicationName: string;
+    /** Epoch ms the dose enters the body. */
+    timestamp: number;
+    /** Administered amount in the engine's mg base. */
+    amountMg: number;
+    /** Modeled concentration right at (after) the dose, in the display unit. */
+    level: number;
+}
+
+/**
+ * Scheduled doses that lie after the current now-instant and inside the
+ * chart window — exactly what lands in the projection slot ahead of the Now
+ * line. The engine marks occurrences past its `now` option as projected.
+ */
+export function collectUpcomingDoses(
+    result: PkResult,
+    options: {
+        /** Window start (>= now instant in practice). */
+        fromMs: number;
+        toMs: number;
+        unit: ConcentrationDisplayUnit;
+        /** Safety cap on chart markers. Default 120. */
+        max?: number;
+    }
+): UpcomingDose[] {
+    const seriesById = new Map(
+        result.series.map((series) => [series.medicationId, series])
+    );
+    const upcoming: UpcomingDose[] = [];
+
+    for (const event of result.events) {
+        if (!event.projected) continue;
+        if (event.timestamp < options.fromMs || event.timestamp > options.toMs) {
+            continue;
+        }
+        const series = seriesById.get(event.medicationId);
+        if (!series) continue;
+        upcoming.push({
+            id: event.id,
+            medicationId: event.medicationId,
+            medicationName: series.medicationName,
+            timestamp: event.timestamp,
+            amountMg: event.amountMg,
+            level: convertConcentration(
+                concentrationAtInstant(series.points, event.timestamp),
+                options.unit
+            ),
+        });
+    }
+
+    const max = options.max ?? 120;
+    return upcoming.length > max ? upcoming.slice(0, max) : upcoming;
+}
+
+/** Formats a dose amount (mg base) in the display unit, e.g. `250 mcg`. */
+export function formatDoseAmount(
+    amountMg: number,
+    unit: ConcentrationDisplayUnit
+): string {
+    return `${formatConcentrationValue(convertConcentration(amountMg, unit))} ${unit}`;
 }

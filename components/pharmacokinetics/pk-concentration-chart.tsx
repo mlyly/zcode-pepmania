@@ -6,6 +6,7 @@ import {
     CartesianGrid,
     ComposedChart,
     ReferenceArea,
+    ReferenceDot,
     ReferenceLine,
     ResponsiveContainer,
     Tooltip,
@@ -21,7 +22,9 @@ import {
     type ConcentrationDisplayUnit,
     formatConcentration,
     formatConcentrationValue,
+    historySlotSplitMs,
     seriesKey,
+    type UpcomingDose,
 } from "@/lib/pharmacokinetics/charting";
 
 // ---------------------------------------------------------------------------
@@ -158,6 +161,8 @@ function ConcentrationTooltip({
 // Chart
 // ---------------------------------------------------------------------------
 
+const Y_AXIS_WIDTH = 64;
+
 export interface PkConcentrationChartProps {
     rows: ConcentrationChartRow[];
     series: PkMedicationSeries[];
@@ -166,12 +171,17 @@ export interface PkConcentrationChartProps {
     range: ChartRange;
     startMs: number;
     endMs: number;
+    /** The real-clock instant — pinned at the start of the third slot. */
     nowMs: number;
+    /** Scheduled doses after now, rendered as open-ring markers. */
+    upcoming: UpcomingDose[];
 }
 
 /**
- * Multi-medication overlay. The shaded right-hand region is the projection
- * tail (scheduled doses after "now"); the dashed line marks the present.
+ * Multi-medication overlay laid out in three equal time slots: two slots of
+ * history to the left of the Now line, one shaded projection slot to the
+ * right. Scheduled doses ahead of now land inside that projection slot and
+ * are marked on the curve with open rings.
  */
 export function PkConcentrationChart({
                                          rows,
@@ -182,15 +192,12 @@ export function PkConcentrationChart({
                                          startMs,
                                          endMs,
                                          nowMs,
+                                         upcoming,
                                      }: PkConcentrationChartProps) {
+    const slotSplit = historySlotSplitMs(startMs, nowMs);
+
     return (
-        <div
-            className="h-[340px] w-full sm:h-[420px]"
-            role="img"
-            aria-label={`Estimated concentration curves for ${series
-                .map((item) => item.medicationName)
-                .join(", ")} over the selected ${range.label.toLowerCase()} window.`}
-        >
+        <div className="h-[320px] w-full sm:h-[400px]">
             <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart
                     data={rows}
@@ -202,12 +209,20 @@ export function PkConcentrationChart({
                         stroke="var(--border)"
                         strokeDasharray="3 3"
                     />
+                    {/* Slot 3 — the projection region right of Now. */}
                     <ReferenceArea
                         x1={nowMs}
                         x2={endMs}
                         fill="var(--muted)"
                         fillOpacity={0.45}
                         stroke="none"
+                        label={{
+                            value: "Future",
+                            position: "insideTop",
+                            fill: "var(--muted-foreground)",
+                            opacity: 0.9,
+                            fontSize: 10,
+                        }}
                     />
                     <XAxis
                         dataKey="timestamp"
@@ -223,7 +238,7 @@ export function PkConcentrationChart({
                         interval="preserveStartEnd"
                     />
                     <YAxis
-                        width={64}
+                        width={Y_AXIS_WIDTH}
                         domain={[0, "auto"]}
                         tickFormatter={(value) => formatConcentrationValue(Number(value))}
                         tick={{fontSize: 11, fill: "var(--muted-foreground)"}}
@@ -251,20 +266,27 @@ export function PkConcentrationChart({
                         }}
                         isAnimationActive={false}
                     />
+                    {/* Slot 1 | slot 2 divider — keeps the three-slot layout
+                        legible inside the history region. */}
+                    <ReferenceLine
+                        x={slotSplit}
+                        stroke="var(--border)"
+                        strokeDasharray="4 4"
+                    />
                     <ReferenceLine
                         x={nowMs}
-                        stroke="var(--muted-foreground)"
-                        strokeDasharray="3 3"
-                        strokeOpacity={0.7}
+                        stroke="var(--foreground)"
+                        strokeOpacity={0.6}
                         label={{
                             value: "Now",
                             position: "insideTopRight",
-                            fill: "var(--muted-foreground)",
+                            fill: "var(--foreground)",
                             fontSize: 10,
                         }}
                     />
                     {series.map((item) => {
-                        const color = colorById.get(item.medicationId) ?? "var(--chart-1)";
+                        const color =
+                            colorById.get(item.medicationId) ?? "var(--chart-1)";
                         return (
                             <Area
                                 key={item.medicationId}
@@ -279,6 +301,22 @@ export function PkConcentrationChart({
                                 activeDot={{r: 3, strokeWidth: 0}}
                                 isAnimationActive={false}
                                 connectNulls
+                            />
+                        );
+                    })}
+                    {/* Scheduled doses inside the projection slot. */}
+                    {upcoming.map((dose) => {
+                        const color =
+                            colorById.get(dose.medicationId) ?? "var(--chart-1)";
+                        return (
+                            <ReferenceDot
+                                key={dose.id}
+                                x={dose.timestamp}
+                                y={dose.level}
+                                r={3.5}
+                                fill="var(--card)"
+                                stroke={color}
+                                strokeWidth={1.5}
                             />
                         );
                     })}

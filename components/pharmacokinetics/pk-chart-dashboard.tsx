@@ -10,11 +10,13 @@ import {
     buildConcentrationChartRows,
     chartRangeById,
     type ChartRangeId,
+    collectUpcomingDoses,
     concentrationAtInstant,
     type ConcentrationDisplayUnit,
     concentrationSuffix,
     convertConcentration,
     formatConcentration,
+    formatDoseAmount,
     resolveChartWindow,
 } from "@/lib/pharmacokinetics/charting";
 import {formatDay} from "@/lib/scheduling/dates";
@@ -61,6 +63,14 @@ function windowLabel(startMs: number, endMs: number): string {
     return `${formatDay(new Date(startMs))} – ${formatDay(new Date(endMs - 1))}`;
 }
 
+const instantLabel = new Intl.DateTimeFormat(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+});
+
 // ---------------------------------------------------------------------------
 // Dashboard
 // ---------------------------------------------------------------------------
@@ -81,8 +91,8 @@ export function PkChartDashboard() {
     const [now, setNow] = React.useState<Date>(() => new Date());
     const [refreshing, setRefreshing] = React.useState(false);
 
-    // Keep the "now" marker (and the projection split) fresh without making
-    // the page depend on a full reload. Only the chart consumes `now`, and it
+    // Keep the Now line and the three-slot window fresh without making the
+    // page depend on a full reload. Only the chart consumes `now`, and it
     // renders after the data loads, so the initial value can't skew hydration.
     React.useEffect(() => {
         const timer = window.setInterval(() => setNow(new Date()), 60_000);
@@ -127,12 +137,14 @@ export function PkChartDashboard() {
         return map;
     }, [data.medications]);
 
+    // Real clock, refreshed each minute; pins the Now line to the start of
+    // the third slot via resolveChartWindow's fixed 2/3–1/3 split.
+    const nowMs = now.getTime();
     const timeWindow = React.useMemo(() => {
         const resolved = resolveChartWindow(range, now);
         return {
             startMs: resolved.start.getTime(),
             endMs: resolved.end.getTime(),
-            nowMs: now.getTime(),
         };
     }, [range, now]);
 
@@ -149,7 +161,7 @@ export function PkChartDashboard() {
                     {
                         start: timeWindow.startMs,
                         end: timeWindow.endMs,
-                        now: timeWindow.nowMs,
+                        now: nowMs,
                         stepMinutes: range.stepMinutes,
                         maxPoints: 2000,
                     }
@@ -160,7 +172,14 @@ export function PkChartDashboard() {
                 error: error instanceof Error ? error.message : String(error),
             };
         }
-    }, [data.doseLogs, data.schedules, range, selectedMedications, timeWindow]);
+    }, [
+        data.doseLogs,
+        data.schedules,
+        nowMs,
+        range,
+        selectedMedications,
+        timeWindow,
+    ]);
 
     const result = pkState?.result ?? null;
 
@@ -168,6 +187,20 @@ export function PkChartDashboard() {
         () =>
             result ? buildConcentrationChartRows(result.series, unit) : [],
         [result, unit]
+    );
+
+    // Scheduled doses after now, inside the projection slot. The engine
+    // flags occurrences past its `now` option as projected.
+    const upcoming = React.useMemo(
+        () =>
+            result
+                ? collectUpcomingDoses(result, {
+                    fromMs: nowMs,
+                    toMs: timeWindow.endMs,
+                    unit,
+                })
+                : [],
+        [result, nowMs, timeWindow.endMs, unit]
     );
 
     const stats = React.useMemo(() => {
@@ -185,7 +218,7 @@ export function PkChartDashboard() {
             (sum, item) =>
                 sum +
                 convertConcentration(
-                    concentrationAtInstant(item.points, timeWindow.nowMs),
+                    concentrationAtInstant(item.points, nowMs),
                     unit
                 ),
             0
@@ -198,13 +231,9 @@ export function PkChartDashboard() {
             (sum, item) => sum + item.doseCounts.scheduled,
             0
         );
-        const projected = result.series.reduce(
-            (sum, item) => sum + item.doseCounts.projected,
-            0
-        );
 
-        return {topPeak, combinedNow, logged, scheduled, projected};
-    }, [result, unit, timeWindow]);
+        return {topPeak, combinedNow, logged, scheduled};
+    }, [result, nowMs, unit]);
 
     const toggleMedication = React.useCallback(
         (medicationId: string) => {
@@ -353,11 +382,11 @@ export function PkChartDashboard() {
                     <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
                         <StatCard
                             label="Combined now"
-                            value={formatConcentration(stats?.combinedNow ?? 0, unit)}
-                            hint={`At ${new Date(timeWindow.nowMs).toLocaleTimeString(undefined, {
-                                hour: "numeric",
-                                minute: "2-digit",
-                            })}`}
+                            value={formatConcentration(
+                                stats?.combinedNow ?? 0,
+                                unit
+                            )}
+                            hint={instantLabel.format(nowMs)}
                         />
                         <StatCard
                             label="Window peak"
@@ -375,7 +404,7 @@ export function PkChartDashboard() {
                             value={formatNumber(
                                 (stats?.logged ?? 0) + (stats?.scheduled ?? 0)
                             )}
-                            hint={`${stats?.logged ?? 0} logged · ${stats?.projected ?? 0} projected`}
+                            hint={`${stats?.logged ?? 0} logged · ${upcoming.length} upcoming`}
                         />
                         <StatCard
                             label="Active curves"
@@ -421,8 +450,64 @@ export function PkChartDashboard() {
                                 range={range}
                                 startMs={timeWindow.startMs}
                                 endMs={timeWindow.endMs}
-                                nowMs={timeWindow.nowMs}
+                                nowMs={nowMs}
+                                upcoming={upcoming}
                             />
+
+                            {/* Next scheduled doses after the simulated now. */}
+                            <div className="mt-3 flex flex-col gap-1.5 rounded-lg border bg-muted/30 px-3 py-2.5">
+                                <div className="flex items-center justify-between gap-2">
+                                    <p className="text-xs font-medium">
+                                        Upcoming doses (after now)
+                                    </p>
+                                    <Badge variant="secondary" className="px-1.5 py-0 text-[11px] tabular-nums">
+                                        {upcoming.length}
+                                    </Badge>
+                                </div>
+                                {upcoming.length === 0 ? (
+                                    <p className="text-muted-foreground text-xs">
+                                        No scheduled doses after the current now-moment in
+                                        this window.
+                                    </p>
+                                ) : (
+                                    <ul className="flex flex-col gap-1">
+                                        {upcoming.slice(0, 5).map((dose) => {
+                                            const color =
+                                                colorById.get(dose.medicationId) ??
+                                                "var(--chart-1)";
+                                            return (
+                                                <li
+                                                    key={dose.id}
+                                                    className="flex items-center justify-between gap-3 text-xs"
+                                                >
+                                                    <span className="flex min-w-0 items-center gap-1.5">
+                                                        <span
+                                                            className="size-2 shrink-0 rounded-full border-2 bg-transparent"
+                                                            style={{borderColor: color}}
+                                                            aria-hidden
+                                                        />
+                                                        <span className="max-w-36 truncate font-medium">
+                                                            {dose.medicationName}
+                                                        </span>
+                                                    </span>
+                                                    <span
+                                                        className="text-muted-foreground tabular-nums whitespace-nowrap">
+                                                        {instantLabel.format(dose.timestamp)}{" "}
+                                                        ·{" "}
+                                                        {formatDoseAmount(dose.amountMg, unit)}
+                                                    </span>
+                                                </li>
+                                            );
+                                        })}
+                                        {upcoming.length > 5 && (
+                                            <li className="text-muted-foreground text-[11px]">
+                                                +{upcoming.length - 5} more shown as markers
+                                                on the curve
+                                            </li>
+                                        )}
+                                    </ul>
+                                )}
+                            </div>
 
                             <div className="mt-4 flex flex-wrap gap-x-4 gap-y-2 border-t pt-3">
                                 {result.series.map((item) => {
@@ -462,8 +547,11 @@ export function PkChartDashboard() {
 
                             <p className="text-muted-foreground mt-3 flex items-start gap-1.5 text-[11px]">
                                 <Info className="mt-0.5 size-3 shrink-0" aria-hidden/>
-                                Shaded area = projected scheduled doses after now. Curves
-                                are model estimates in dose-equivalent units, not clinical
+                                The chart is split into three equal time slots: two of
+                                history, then the Now line at the start of the third slot —
+                                a fixed projection window where upcoming scheduled doses
+                                (open rings) are modeled ahead of you. Curves are model
+                                estimates in dose-equivalent units, not clinical
                                 measurements.
                                 {unit === "IU" &&
                                     " IU follows the app's 1:1 mg fallback."}

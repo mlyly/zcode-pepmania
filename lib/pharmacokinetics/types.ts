@@ -191,5 +191,11 @@ export interface PkResult {
     /** Effective (uniform-grid) sample spacing in minutes. */
     stepMinutes: number;
     series: PkMedicationSeries[];
+    /**
+     * All dose events considered by the model, sorted by time — including
+     * lookback events before `start` and projected doses (`projected: true`)
+     * after `now`. Dashboards use these to mark dose instants on the curve.
+     */
+    events: PkDoseEvent[];
     warnings: PkWarning[];
 }

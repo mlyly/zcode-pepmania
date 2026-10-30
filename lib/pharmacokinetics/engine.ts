@@ -139,6 +139,7 @@ export function buildPkConcentrationSeries(
         end,
         stepMinutes: sampleGrid.stepMinutes,
         series,
+        events: collection.events,
         warnings,
     };
 }
