@@ -126,6 +126,10 @@ export function formatConcentrationValue(value: number): string {
     return formatterFor(digits).format(value);
 }
 
+/**
+ * Formats a concentration already expressed in `unit` (convert first with
+ * `convertConcentration` when starting from the engine's mg-equivalent base).
+ */
 export function formatConcentration(
     value: number,
     unit: ConcentrationDisplayUnit

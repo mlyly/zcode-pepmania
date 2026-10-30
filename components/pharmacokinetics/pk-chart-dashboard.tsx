@@ -78,13 +78,13 @@ export function PkChartDashboard() {
     const [deselectedIds, setDeselectedIds] = React.useState<Set<string>>(
         () => new Set()
     );
-    const [now, setNow] = React.useState<Date | null>(null);
+    const [now, setNow] = React.useState<Date>(() => new Date());
     const [refreshing, setRefreshing] = React.useState(false);
 
     // Keep the "now" marker (and the projection split) fresh without making
-    // the page depend on a full reload.
+    // the page depend on a full reload. Only the chart consumes `now`, and it
+    // renders after the data loads, so the initial value can't skew hydration.
     React.useEffect(() => {
-        setNow(new Date());
         const timer = window.setInterval(() => setNow(new Date()), 60_000);
         return () => window.clearInterval(timer);
     }, []);
@@ -128,7 +128,6 @@ export function PkChartDashboard() {
     }, [data.medications]);
 
     const timeWindow = React.useMemo(() => {
-        if (!now) return null;
         const resolved = resolveChartWindow(range, now);
         return {
             startMs: resolved.start.getTime(),
@@ -138,7 +137,7 @@ export function PkChartDashboard() {
     }, [range, now]);
 
     const pkState = React.useMemo<PkState | null>(() => {
-        if (!timeWindow || selectedMedications.length === 0) return null;
+        if (selectedMedications.length === 0) return null;
         try {
             return {
                 result: buildPkConcentrationSeries(
@@ -172,7 +171,7 @@ export function PkChartDashboard() {
     );
 
     const stats = React.useMemo(() => {
-        if (!result || result.series.length === 0 || !timeWindow) return null;
+        if (!result || result.series.length === 0) return null;
 
         const peaks = result.series.map((item) => ({
             name: item.medicationName,
@@ -343,8 +342,6 @@ export function PkChartDashboard() {
                         </Button>
                     }
                 />
-            ) : !timeWindow ? (
-                <DashboardSkeleton/>
             ) : pkState?.error ? (
                 <EmptyState
                     icon={<AlertCircle className="text-destructive size-5" aria-hidden/>}
