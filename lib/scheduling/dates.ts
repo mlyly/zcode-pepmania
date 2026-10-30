@@ -189,3 +189,57 @@ export function formatRelativeDay(date: Date, now = new Date()): string {
         ? base
         : `${base} ${day.getFullYear()}`;
 }
+
+// ---------------------------------------------------------------------------
+// datetime-local inputs (dose log timestamps)
+// ---------------------------------------------------------------------------
+
+/**
+ * Shape of the `datetime-local` input value: `YYYY-MM-DDTHH:MM`, seconds
+ * optional (`…HH:MM:SS`).
+ */
+export const DATETIME_LOCAL_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?$/;
+
+/**
+ * Parses a `datetime-local` value into an ISO instant, interpreting the value
+ * as local wall-clock time. Never `new Date(value)` — the string carries no
+ * zone, so the constructor would (incorrectly) assume UTC. Returns `null` for
+ * malformed or out-of-calendar values (e.g. 2026-02-30, or a two-digit year
+ * that `Date` would remap to the 1900s).
+ */
+export function datetimeLocalToIso(value: string): string | null {
+    const trimmed = value.trim();
+    if (!DATETIME_LOCAL_PATTERN.test(trimmed)) return null;
+    const year = Number(trimmed.slice(0, 4));
+    const month = Number(trimmed.slice(5, 7));
+    const day = Number(trimmed.slice(8, 10));
+    const hour = Number(trimmed.slice(11, 13));
+    const minute = Number(trimmed.slice(14, 16));
+    const second = trimmed.length > 16 ? Number(trimmed.slice(17, 19)) : 0;
+    if (year < 100 || month < 1 || month > 12 || day < 1 || day > 31) return null;
+    if (hour > 23 || minute > 59 || second > 59) return null;
+    const date = new Date(year, month - 1, day, hour, minute, second, 0);
+    if (
+        date.getFullYear() !== year ||
+        date.getMonth() !== month - 1 ||
+        date.getDate() !== day
+    ) {
+        return null;
+    }
+    return date.toISOString();
+}
+
+/**
+ * ISO instant → `datetime-local` input value in the user's local zone, at
+ * minute precision (`YYYY-MM-DDTHH:MM`) — the app's convention is HH:MM
+ * everywhere, so seconds are dropped. Returns `""` for unparseable input.
+ */
+export function isoToDatetimeLocal(iso: string): string {
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return "";
+    const pad = (value: number) => String(value).padStart(2, "0");
+    return (
+        `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
+        `T${pad(date.getHours())}:${pad(date.getMinutes())}`
+    );
+}

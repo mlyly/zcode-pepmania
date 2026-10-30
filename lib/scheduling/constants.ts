@@ -130,3 +130,35 @@ export function timeToMinutes(timeOfDay: string): number {
     if (!match) return 12 * 60;
     return Number(match[1]) * 60 + Number(match[2]);
 }
+
+// ---------------------------------------------------------------------------
+// Injection sites (dose log module)
+// ---------------------------------------------------------------------------
+
+/**
+ * Common injection-site presets offered by the dose log form. Unusual sites
+ * are accepted free-text ("Other"); the list is intentionally short — presets
+ * are a convenience, not a validation.
+ */
+export const INJECTION_SITES = [
+    "Abdomen",
+    "Upper arm",
+    "Thigh",
+    "Lower leg",
+    "Buttock",
+] as const;
+
+export type InjectionSitePreset = (typeof INJECTION_SITES)[number];
+
+/**
+ * Form-state sentinel for "site not recorded". Radix `SelectItem` rejects an
+ * empty string as its value, so the no-site choice needs its own id; it
+ * resolves to an *unset* field on the saved log.
+ */
+export const UNSPECIFIED_SITE = "unspecified";
+
+/** Form-state sentinel for the free-text "other site" choice. */
+export const CUSTOM_SITE = "other";
+
+/** Maximum length of a free-text injection site. */
+export const MAX_SITE_LENGTH = 60;

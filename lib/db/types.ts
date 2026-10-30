@@ -99,6 +99,13 @@ export interface DoseLog {
      * it and match occurrences by schedule + same calendar day.
      */
     scheduledFor?: string;
+    /**
+     * v4: Optional injection site (e.g. "Abdomen"). Free text — the form
+     * offers common presets (`lib/scheduling/constants.ts`) plus a free-text
+     * "Other"; unusual sites are stored as-typed. Oral and other non-
+     * injected doses simply leave it unset.
+     */
+    injectionSite?: string;
     notes?: string;
 }
 

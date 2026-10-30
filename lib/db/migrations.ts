@@ -30,7 +30,7 @@ export interface SchemaVersion {
     stores: Record<string, string>;
 }
 
-export const LATEST_SCHEMA_VERSION = 3;
+export const LATEST_SCHEMA_VERSION = 4;
 
 /**
  * Index declarations. Primary keys (`id`) are non-indexed UUIDs; other fields
@@ -67,6 +67,14 @@ export const SCHEMA_VERSIONS: SchemaVersion[] = [
             doseLogs:
                 "id, medicationId, scheduleId, timestamp, scheduledFor, [medicationId+timestamp]",
         },
+    },
+    {
+        // v4 is a pure schema-shape migration: `DoseLog` gains an optional,
+        // non-indexed `injectionSite` string (dose log module). No index
+        // changes, so the accumulated store map is re-declared unchanged (as
+        // in v2); existing rows simply lack the field until first edited.
+        version: 4,
+        stores: {},
     },
 ];
 
@@ -238,6 +246,19 @@ export const MIGRATIONS: Migration[] = [
                     }
                 }
             }
+        },
+    },
+    {
+        version: 4,
+        description:
+            "Dose log module: dose logs gain an optional `injectionSite` " +
+            "string (additive — existing rows stay valid and are simply unset).",
+        up: () => {
+            // Additive optional field: nothing to transform on the live database.
+        },
+        upSnapshot: () => {
+            // Additive optional field: import payloads from older versions are
+            // accepted as-is (absent `injectionSite` ≡ unset).
         },
     },
 ];

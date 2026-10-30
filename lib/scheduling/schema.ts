@@ -7,13 +7,29 @@
  * `superRefine` pass so messages stay human-readable, and `toScheduleInput`
  * turns validated values into the canonical input (dropping fields that the
  * selected frequency type doesn't use, resolving slot → concrete time).
+ *
+ * The dose log follows the same split: `doseLogInputSchema` (canonical,
+ * create — timestamp optional) and `doseLogUpdateInputSchema` (PUT-style,
+ * edit — timestamp required) both feed the shared `doseLogFormSchema`; the
+ * `scheduleId`/`scheduledFor` provenance is preserved by the service, never
+ * by the form.
  */
 import {z} from "zod";
 
-import type {Medication, Schedule, Weekday} from "@/lib/db/types";
+import type {DoseLog, DoseUnit, Medication, Schedule, Weekday} from "@/lib/db/types";
 import {DOSE_UNITS} from "@/lib/medications/constants";
-import {WEEKDAYS} from "./constants";
-import {DATE_ONLY_PATTERN, dateOnlyIso, isoDateOnly, localDateFromIso, TIME_OF_DAY_PATTERN,} from "./dates";
+import {CUSTOM_SITE, INJECTION_SITES, MAX_SITE_LENGTH, UNSPECIFIED_SITE, WEEKDAYS,} from "./constants";
+import {
+    DATE_ONLY_PATTERN,
+    dateOnlyIso,
+    DATETIME_LOCAL_PATTERN,
+    datetimeLocalToIso,
+    isoDateOnly,
+    isoToDatetimeLocal,
+    localDateFromIso,
+    TIME_OF_DAY_PATTERN,
+} from "./dates";
+import {prefilledDoseAmount} from "./derived";
 
 // ---------------------------------------------------------------------------
 // Canonical (service-level) schema
@@ -36,6 +52,12 @@ export const timeOfDaySchema = z
     .string()
     .trim()
     .regex(TIME_OF_DAY_PATTERN, "Use HH:MM (24h)");
+
+/** ISO datetime instant (must parse as a real date) — dose log timestamps. */
+export const isoInstantSchema = z
+    .string()
+    .min(1, "Pick a date and time")
+    .refine((value) => !Number.isNaN(new Date(value).getTime()), "Not a valid date");
 
 export const scheduleInputSchema = z
     .object({
@@ -135,6 +157,8 @@ export const doseLogInputSchema = z.object({
     timestamp: z.string().min(1).optional(),
     /** ISO datetime of the scheduled occurrence this log completes (checklist logs). */
     scheduledFor: z.string().min(1).optional(),
+    /** Optional injection site (free text; the form offers presets + "other"). */
+    injectionSite: z.string().trim().max(MAX_SITE_LENGTH, "Injection site too long").optional(),
     notes: z
         .string()
         .trim()
@@ -143,6 +167,33 @@ export const doseLogInputSchema = z.object({
 });
 
 export type DoseLogInput = z.infer<typeof doseLogInputSchema>;
+
+export interface DoseLogUpdateInput {
+    medicationId: string;
+    doseAmount: number;
+    unit: DoseUnit;
+    /** New administration instant (ISO). Required — an edit restamps it. */
+    timestamp: string;
+    /** PUT semantics: an absent optional field clears the stored value. */
+    injectionSite?: string;
+    notes?: string;
+}
+
+export const doseLogUpdateInputSchema = z.object({
+    medicationId: z.string().min(1, "Choose a medication"),
+    doseAmount: z
+        .number()
+        .positive("Dose must be greater than zero")
+        .max(1e9, "Dose looks too large"),
+    unit: z.enum(DOSE_UNITS),
+    timestamp: isoInstantSchema,
+    injectionSite: z.string().trim().max(MAX_SITE_LENGTH, "Injection site too long").optional(),
+    notes: z
+        .string()
+        .trim()
+        .max(2000, "Notes are limited to 2000 characters")
+        .optional(),
+});
 
 // ---------------------------------------------------------------------------
 // Form (dialog) schema
@@ -334,5 +385,131 @@ export function toScheduleInput(values: ScheduleFormValues): ScheduleInput {
         timeOfDay,
         startDate: values.startDate.trim(),
         active: values.active,
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Dose log form (dialog) schema + conversions
+// ---------------------------------------------------------------------------
+
+export const doseLogFormSchema = z
+    .object({
+        medicationId: z.string().min(1, "Choose a medication"),
+        doseAmount: z.string(),
+        unit: z.enum(DOSE_UNITS),
+        /** `datetime-local` value: `YYYY-MM-DDTHH:MM`, seconds optional. */
+        timestamp: z
+            .string()
+            .regex(DATETIME_LOCAL_PATTERN, "Pick a date and time")
+            .refine((value) => datetimeLocalToIso(value) !== null, "Not a real date and time"),
+        /** A site preset, "other" (free text), or the "not recorded" sentinel. */
+        siteSelection: z.enum([UNSPECIFIED_SITE, CUSTOM_SITE, ...INJECTION_SITES]),
+        /** Free-text site — required only when `siteSelection` is "other". */
+        siteDetail: z.string().trim().max(MAX_SITE_LENGTH, "Keep the site under 60 characters"),
+        notes: z.string().trim().max(2000, "Notes are limited to 2000 characters"),
+    })
+    .superRefine((values, ctx) => {
+        const dose = values.doseAmount.trim();
+        if (dose === "") {
+            ctx.addIssue({code: "custom", path: ["doseAmount"], message: "Dose amount is required"});
+        } else {
+            const amount = Number(dose);
+            if (!Number.isFinite(amount) || amount <= 0) {
+                ctx.addIssue({code: "custom", path: ["doseAmount"], message: "Dose must be greater than zero"});
+            } else if (amount > 1e9) {
+                ctx.addIssue({code: "custom", path: ["doseAmount"], message: "Dose looks too large"});
+            }
+        }
+
+        if (values.siteSelection === CUSTOM_SITE && values.siteDetail.trim() === "") {
+            ctx.addIssue({
+                code: "custom",
+                path: ["siteDetail"],
+                message: "Describe the site, or pick a preset (or 'Not recorded')",
+            });
+        }
+    });
+
+export type DoseLogFormValues = z.infer<typeof doseLogFormSchema>;
+
+/** The dose form's site select: a preset label, "other", or "unspecified". */
+export type SiteSelection = DoseLogFormValues["siteSelection"];
+
+/**
+ * Maps a stored log to the form's site fields: a preset label keeps its
+ * preset; any other non-empty text becomes "other" + free text; absent (or
+ * empty) is the "not recorded" sentinel.
+ */
+export function siteSelectionFor(
+    log: Pick<DoseLog, "injectionSite"> | null | undefined
+): { siteSelection: SiteSelection; siteDetail: string } {
+    const site = log?.injectionSite?.trim();
+    if (!site) return {siteSelection: UNSPECIFIED_SITE, siteDetail: ""};
+    if ((INJECTION_SITES as readonly string[]).includes(site)) {
+        return {siteSelection: site as SiteSelection, siteDetail: ""};
+    }
+    return {siteSelection: CUSTOM_SITE, siteDetail: site};
+}
+
+/**
+ * Collapses the two site fields into the single stored value: a preset keeps
+ * its label; "other" keeps the free text; "not recorded" (or an empty detail)
+ * leaves the site unset.
+ */
+export function resolveInjectionSite(
+    values: Pick<DoseLogFormValues, "siteSelection" | "siteDetail">
+): string | undefined {
+    if (values.siteSelection === UNSPECIFIED_SITE) return undefined;
+    if (values.siteSelection === CUSTOM_SITE) {
+        const detail = values.siteDetail.trim();
+        return detail === "" ? undefined : detail;
+    }
+    return values.siteSelection;
+}
+
+/**
+ * Builds dialog defaults. Pass a log to prefill for editing; pass the
+ * medications (create mode) to seed the first one, its prefill dose and the
+ * current instant.
+ */
+export function doseLogToFormValues(
+    log: DoseLog | null,
+    medications: Medication[],
+    schedules: readonly Schedule[]
+): DoseLogFormValues {
+    if (log) {
+        return {
+            medicationId: log.medicationId,
+            doseAmount: log.doseAmount.toString(),
+            unit: log.unit,
+            timestamp: isoToDatetimeLocal(log.timestamp),
+            ...siteSelectionFor(log),
+            notes: log.notes ?? "",
+        };
+    }
+    const medication = medications[0];
+    return {
+        medicationId: medication?.id ?? "",
+        doseAmount: prefilledDoseAmount(medication, schedules).toString(),
+        unit: medication?.unit ?? "mg",
+        timestamp: isoToDatetimeLocal(new Date().toISOString()),
+        siteSelection: UNSPECIFIED_SITE,
+        siteDetail: "",
+        notes: "",
+    };
+}
+
+/** Converts validated form values into the canonical service input. */
+export function toDoseLogInput(values: DoseLogFormValues): DoseLogInput {
+    return {
+        medicationId: values.medicationId,
+        doseAmount: parseFormNumber(values.doseAmount) ?? Number.NaN,
+        unit: values.unit,
+        // The form already validated the value as a real date/time, so a null
+        // parse can't survive validation; on the create path it maps to "now"
+        // (the update path requires it via `doseLogUpdateInputSchema`).
+        timestamp: datetimeLocalToIso(values.timestamp) ?? undefined,
+        injectionSite: resolveInjectionSite(values),
+        notes: values.notes.trim() || undefined,
     };
 }
