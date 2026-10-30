@@ -55,7 +55,8 @@ export const OVERDUE_GRACE_MINUTES = 60;
 export const MAX_EXPANSION_DAYS = 400;
 
 /**
- * True when the schedule fires on the given calendar day.
+ * True when the schedule fires on the given calendar day. An inactive
+ * (paused) schedule never fires.
  *
  *  - `daily`: every day from `startDate` onward.
  *  - `weekly`: days whose weekday is in `weekdays` (pre-v3 rows fall back to
@@ -64,6 +65,7 @@ export const MAX_EXPANSION_DAYS = 400;
  *    (i.e. days at whole-multiple offsets from the start).
  */
 export function scheduleFiresOnDay(schedule: Schedule, day: Date): boolean {
+    if (!schedule.active) return false;
     const start = localDateFromIso(schedule.startDate);
     if (!start) return false;
     const offset = diffDays(start, day);
@@ -136,10 +138,9 @@ export function expandSchedule(
 export function expandSchedules(
     schedules: Schedule[],
     from: Date,
-    to: Date,
-    now: Date = new Date()
+    to: Date
 ): Occurrence[] {
-    const all = schedules.flatMap((schedule) => expandSchedule(schedule, from, to, now));
+    const all = schedules.flatMap((schedule) => expandSchedule(schedule, from, to));
     return all.sort(
         (a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime() || a.key.localeCompare(b.key)
     );
@@ -216,7 +217,7 @@ export function dayAgenda(
     day: Date,
     now: Date = new Date()
 ): (Occurrence & { status: OccurrenceStatus })[] {
-    return withStatuses(expandSchedules(schedules, day, day, now), doseLogs, now);
+    return withStatuses(expandSchedules(schedules, day, day), doseLogs, now);
 }
 
 /**
@@ -230,7 +231,7 @@ export function rangeAgenda(
     to: Date,
     now: Date = new Date()
 ): (Occurrence & { status: OccurrenceStatus })[] {
-    return withStatuses(expandSchedules(schedules, from, to, now), doseLogs, now);
+    return withStatuses(expandSchedules(schedules, from, to), doseLogs, now);
 }
 
 /**

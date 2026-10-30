@@ -31,7 +31,7 @@ function nowIso(): string {
 // Schedules
 // ---------------------------------------------------------------------------
 
-/** All schedules, newest start date first (stable tie-break on id). */
+/** All schedules, oldest start date first (stable tie-break on id). */
 export async function listSchedules(): Promise<Schedule[]> {
     const schedules = await db.schedules.toArray();
     return schedules.sort(

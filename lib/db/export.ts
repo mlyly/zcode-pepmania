@@ -63,6 +63,11 @@ async function sha256Hex(text: string): Promise<string> {
         .join("");
 }
 
+/** SHA-256 (hex) over the canonical JSON of `data` — the export checksum. */
+export async function canonicalChecksum(data: unknown): Promise<string> {
+    return sha256Hex(canonicalize(data));
+}
+
 /** Reads every domain table into a plain snapshot object. */
 export async function snapshotDatabase(): Promise<DatabaseSnapshot> {
     const [medications, schedules, doseLogs, measurementTypes, measurementLogs] =
@@ -86,7 +91,7 @@ export async function snapshotDatabase(): Promise<DatabaseSnapshot> {
 /** Builds a checksummed export payload from a snapshot of the live database. */
 export async function buildExportPayload(): Promise<ExportPayload> {
     const data = await snapshotDatabase();
-    const checksum = await sha256Hex(canonicalize(data));
+    const checksum = await canonicalChecksum(data);
     return {
         app: EXPORT_APP_ID,
         formatVersion: EXPORT_FORMAT_VERSION,
@@ -123,7 +128,7 @@ export async function validateExportPayload(raw: string): Promise<ExportPayload>
         throw new ImportError("Unsupported export format version.", "unknown-format");
     }
 
-    const recomputed = await sha256Hex(canonicalize(payload.data));
+    const recomputed = await canonicalChecksum(payload.data);
     if (recomputed !== payload.checksum) {
         throw new ImportError(
             "Checksum mismatch — the file may be corrupted or tampered with.",
@@ -141,8 +146,10 @@ export async function validateExportPayload(raw: string): Promise<ExportPayload>
     if (schemaVersion < LATEST_SCHEMA_VERSION) {
         // Future-compatible hook: each Migration may declare a pure-data
         // `upSnapshot` used to upgrade import payloads older than the app.
+        // Migrations at or below the payload's version are already applied and
+        // irrelevant — only the newer ones must have a snapshot twin.
         const promotable = MIGRATIONS.every(
-            (m) => m.version > schemaVersion && typeof m.upSnapshot === "function"
+            (m) => m.version <= schemaVersion || typeof m.upSnapshot === "function"
         );
         if (!promotable) {
             throw new ImportError(
