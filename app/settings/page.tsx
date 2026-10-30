@@ -14,8 +14,10 @@ export default function SettingsPage() {
     return (
         <div className="flex flex-1 flex-col items-center gap-8 px-4 py-12">
             <header className="flex w-full max-w-2xl flex-col gap-3">
-                <BackButton/>
-                <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
+                <div className="flex items-center gap-1">
+                    <BackButton/>
+                    <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
+                </div>
                 <p className="text-muted-foreground max-w-xl">
                     Your data lives only in this browser (IndexedDB) — export, import
                     or erase it — and nothing ever leaves your device.

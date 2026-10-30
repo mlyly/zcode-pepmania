@@ -4,9 +4,10 @@ import {useRouter} from "next/navigation";
 import {ChevronLeft} from "lucide-react";
 
 import {Button} from "@/components/ui/button";
+import {cn} from "@/lib/utils";
 
 /**
- * "<" back navigation for sub-pages.
+ * "<" back navigation for sub-pages, placed inline before the page title.
  *
  * Uses the browser history stack (`router.back()`) so it returns to whichever
  * page the user transferred from — the dashboard, another sub-page, or an
@@ -14,14 +15,21 @@ import {Button} from "@/components/ui/button";
  * tab with nothing behind it), it falls back to the given href instead of
  * leaving the app.
  */
-export function BackButton({fallbackHref = "/"}: { fallbackHref?: string }) {
+export function BackButton({
+                               fallbackHref = "/",
+                               className,
+                           }: {
+    fallbackHref?: string;
+    className?: string;
+}) {
     const router = useRouter();
 
     return (
         <Button
             variant="ghost"
             size="sm"
-            className="-ml-2"
+            aria-label="Back"
+            className={cn("-ml-2", className)}
             onClick={() => {
                 if (window.history.length > 1) {
                     router.back();
@@ -30,8 +38,7 @@ export function BackButton({fallbackHref = "/"}: { fallbackHref?: string }) {
                 }
             }}
         >
-            <ChevronLeft className="size-4" aria-hidden/>
-            Back
+            <ChevronLeft className="size-5" aria-hidden/>
         </Button>
     );
 }

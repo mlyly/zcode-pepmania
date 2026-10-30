@@ -14,8 +14,10 @@ export default function DoseLogsPage() {
     return (
         <div className="flex flex-1 flex-col items-center gap-8 px-4 py-12">
             <header className="flex w-full max-w-3xl flex-col gap-3">
-                <BackButton/>
-                <h1 className="text-2xl font-semibold tracking-tight">Dose Log</h1>
+                <div className="flex items-center gap-1">
+                    <BackButton/>
+                    <h1 className="text-2xl font-semibold tracking-tight">Dose Log</h1>
+                </div>
                 <p className="text-muted-foreground max-w-2xl">
                     Your complete dose history — scheduled check-offs and one-off doses,
                     with exact times, amounts, sites and notes. Search, filter, edit or
