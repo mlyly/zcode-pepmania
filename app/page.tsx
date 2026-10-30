@@ -1,5 +1,5 @@
 import Link from "next/link";
-import {ArrowUpRight, CalendarCheck2, ChartSpline, ClipboardList, Pill, Settings} from "lucide-react";
+import {Activity, ArrowUpRight, CalendarCheck2, ChartSpline, ClipboardList, Pill, Settings} from "lucide-react";
 
 import {Button} from "@/components/ui/button";
 import {StatusBadges, StorageStatus} from "@/components/app/storage-status";
@@ -10,7 +10,7 @@ const modules: {
     title: string;
     description: string;
     /** Route for implemented modules; planned ones render without a link. */
-    href?: "/medications" | "/schedules" | "/dose-logs" | "/pharmacokinetics";
+    href?: "/medications" | "/schedules" | "/dose-logs" | "/pharmacokinetics" | "/measurements";
 }[] = [
     {
         title: "Quick Log",
@@ -32,7 +32,11 @@ const modules: {
         description: "Concentration decay curves, multi-medication overlay.",
         href: "/pharmacokinetics"
     },
-    {title: "Body Metrics", description: "Custom measurements with quick logging."},
+    {
+        title: "Body Metrics",
+        description: "Weight, blood pressure and custom trackers with trend charts and quick logging.",
+        href: "/measurements",
+    },
 ];
 
 export default function Home() {
@@ -69,6 +73,12 @@ export default function Home() {
                           </Link>
                       </Button>
                       <Button asChild variant="ghost" size="sm">
+                          <Link href="/measurements">
+                              <Activity className="size-4" aria-hidden/>
+                              Metrics
+                          </Link>
+                      </Button>
+                      <Button asChild variant="ghost" size="sm">
                           <Link href="/settings">
                               <Settings className="size-4" aria-hidden/>
                               Settings
@@ -94,8 +104,8 @@ export default function Home() {
                   <CardHeader>
                       <CardTitle className="text-base">Dashboard modules</CardTitle>
                       <CardDescription>
-                          The tracker’s surface — inventory, scheduling, dose history and
-                          concentration charts are live; body metrics is coming.
+                          The tracker’s surface — inventory, scheduling, dose history,
+                          concentration charts and body metrics are all live.
                       </CardDescription>
                   </CardHeader>
                   <CardContent className="grid gap-4 sm:grid-cols-2">

@@ -69,8 +69,8 @@ async function main() {
     // ------------------------------------------------------------------ v2
     const result = await ensureDatabase();
     check(
-        "fresh database stamps schema v4",
-        result.to === LATEST_SCHEMA_VERSION && LATEST_SCHEMA_VERSION === 4,
+        "fresh database stamps schema v5",
+        result.to === LATEST_SCHEMA_VERSION && LATEST_SCHEMA_VERSION === 5,
         `got ${result.to}`
     );
 
@@ -114,8 +114,8 @@ async function main() {
     const afterMigration = await db.medications.toArray();
     const byId = new Map(afterMigration.map((m) => [m.id, m]));
     check(
-        "migration reports v1 → v4 (v2 + v3 + v4 applied)",
-        migrated.from === 1 && migrated.to === 4,
+        "migration reports v1 → v5 (v2 + v3 + v4 + v5 applied)",
+        migrated.from === 1 && migrated.to === 5,
         `got ${migrated.from} → ${migrated.to}`
     );
     check(

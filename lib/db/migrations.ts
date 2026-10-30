@@ -30,7 +30,7 @@ export interface SchemaVersion {
     stores: Record<string, string>;
 }
 
-export const LATEST_SCHEMA_VERSION = 4;
+export const LATEST_SCHEMA_VERSION = 5;
 
 /**
  * Index declarations. Primary keys (`id`) are non-indexed UUIDs; other fields
@@ -74,6 +74,15 @@ export const SCHEMA_VERSIONS: SchemaVersion[] = [
         // changes, so the accumulated store map is re-declared unchanged (as
         // in v2); existing rows simply lack the field until first edited.
         version: 4,
+        stores: {},
+    },
+    {
+        // v5 is a pure schema-shape migration: `MeasurementType` gains an
+        // optional `valueKind` ("numeric" | "blood_pressure") that drives the
+        // body-metrics input shapes and trend charts (measurements module).
+        // Additive, non-indexed — absent ≡ "numeric", so existing rows and
+        // re-imported payloads validate unchanged.
+        version: 5,
         stores: {},
     },
 ];
@@ -259,6 +268,24 @@ export const MIGRATIONS: Migration[] = [
         upSnapshot: () => {
             // Additive optional field: import payloads from older versions are
             // accepted as-is (absent `injectionSite` ≡ unset).
+        },
+    },
+    {
+        version: 5,
+        description:
+            "Body measurements module: measurement types gain an optional " +
+            "`valueKind` ('numeric' | 'blood_pressure') driving the input " +
+            "shape and trend charts (additive — absent ≡ 'numeric').",
+        up: () => {
+            // Additive optional field: nothing to transform on the live
+            // database. Built-in trackers (Weight, Blood Pressure) are seeded
+            // lazily and idempotently by the measurements service, which also
+            // covers fresh databases (created straight at the latest version)
+            // and imported payloads.
+        },
+        upSnapshot: () => {
+            // Additive optional field: import payloads from older versions are
+            // accepted as-is (absent `valueKind` ≡ "numeric").
         },
     },
 ];

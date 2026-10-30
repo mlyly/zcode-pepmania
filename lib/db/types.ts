@@ -109,11 +109,20 @@ export interface DoseLog {
     notes?: string;
 }
 
+/** How values for a measurement type are entered and stored. */
+export type MeasurementValueKind = "numeric" | "blood_pressure";
+
 export interface MeasurementType {
     id: string;
     name: string;
     unit: string;
+    /** Built-in (default) trackers are `false`; user-created ones `true`. */
     isCustom: boolean;
+    /**
+     * v5: value shape for this type — numeric input or a systolic/diastolic
+     * pair (stored as "120/80"). Absent ≡ "numeric" (pre-v5 rows stay valid).
+     */
+    valueKind?: MeasurementValueKind;
 }
 
 export interface MeasurementLog {
@@ -121,6 +130,7 @@ export interface MeasurementLog {
     measurementTypeId: string;
     /** Numeric for standard measurements, string allowed for BP ("120/80"). */
     value: number | string;
+    /** ISO datetime — when the reading was taken. */
     timestamp: string;
     notes?: string;
 }

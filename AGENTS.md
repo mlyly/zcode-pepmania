@@ -123,12 +123,22 @@ interface DoseLog {
 
 ### 3.3 Body Measurements
 
+> **v5 (current):** measurement types gain an optional `valueKind`
+> (`"numeric" | "blood_pressure"`; absent ≡ numeric). The two built-in
+> trackers (Weight, Blood Pressure — fixed ids, not deletable, kind locked)
+> are seeded idempotently by `lib/measurements/service.ts`; a BP reading is
+> stored as the string `"120/80"`. Deleting a custom tracker cascades to its
+> logs.
+
 ```ts
+type MeasurementValueKind = "numeric" | "blood_pressure";
+
 interface MeasurementType {
     id: string;
     name: string; // e.g., "Weight", "Blood Pressure", "Waist Circumference"
-    unit: string; // e.g., "kg", "lbs", "mmHg", "cm"
+  unit: string; // e.g., "kg", "lbs", "mmHg", "cm", "%", "mmol/L", "bpm"
     isCustom: boolean;
+  valueKind?: MeasurementValueKind; // v5 — drives input shape & trend series
 }
 
 interface MeasurementLog {
