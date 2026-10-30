@@ -12,6 +12,7 @@ import {Input} from "@/components/ui/input";
 import {Progress} from "@/components/ui/progress";
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from "@/components/ui/select";
 import type {Medication} from "@/lib/db/types";
+import {useHydrated} from "@/lib/hooks/use-hydrated";
 import {medicationTypeMeta} from "@/lib/medications/constants";
 import {TIME_SLOTS, timeSlotFor, type TimeSlotMeta} from "@/lib/scheduling/constants";
 import {formatClockTime, formatDay} from "@/lib/scheduling/dates";
@@ -62,6 +63,9 @@ export function TodayChecklist({
                                    onManage,
                                }: TodayChecklistProps) {
     const now = React.useMemo(() => new Date(), []); // stable per mount; reload re-renders
+    // Dates are formatted with the *browser's* locale/clock, so they must not
+    // be part of the server HTML (see `useHydrated`).
+    const hydrated = useHydrated();
     const [actingKey, setActingKey] = React.useState<string | null>(null);
     const [adHocOpen, setAdHocOpen] = React.useState(false);
 
@@ -221,7 +225,7 @@ export function TodayChecklist({
                     </div>
                 </div>
                 <p className="text-muted-foreground text-xs tabular-nums">
-                    {formatDay(now)} · {doneCount} of {today.length} done
+                    {hydrated ? formatDay(now) : "Today"} · {doneCount} of {today.length} done
                     {overdueCount > 0 && (
                         <span className="text-amber-600 dark:text-amber-400">
                             {" "}· {overdueCount} overdue
