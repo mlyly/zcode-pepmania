@@ -39,6 +39,8 @@ export interface TodayChecklistProps {
     data: TrackerData;
     /** Called after any successful mutation (caller reloads its tables). */
     onChanged: () => void;
+    /** Called when a mutation fails (the manager shows the feedback line). */
+    onError?: (error: unknown, prefix: string) => void;
     /** Disables mutations while a write is in flight. */
     busy?: boolean;
     /**
@@ -58,6 +60,7 @@ export interface TodayChecklistProps {
 export function TodayChecklist({
                                    data,
                                    onChanged,
+                                   onError,
                                    busy = false,
                                    manageHref,
                                    onManage,
@@ -141,13 +144,13 @@ export function TodayChecklist({
                     });
                 }
                 onChanged();
-            } catch {
-                // Surface via the manager's feedback; leave state untouched.
+            } catch (error: unknown) {
+                onError?.(error, "Could not update the dose log");
             } finally {
                 setActingKey(null);
             }
         },
-        [data.doseLogs, onChanged]
+        [data.doseLogs, onChanged, onError]
     );
 
     const logAll = React.useCallback(async () => {
@@ -165,12 +168,12 @@ export function TodayChecklist({
                 }))
             );
             onChanged();
-        } catch {
-            // surfaced by the manager
+        } catch (error: unknown) {
+            onError?.(error, "Could not log today's doses");
         } finally {
             setActingKey(null);
         }
-    }, [today, onChanged]);
+    }, [today, onChanged, onError]);
 
     const logMissed = React.useCallback(
         async (item: { occurrence: WithStatus<Occurrence>; medication: Medication | null }) => {
@@ -185,13 +188,13 @@ export function TodayChecklist({
                     notes: "Make-up dose",
                 });
                 onChanged();
-            } catch {
-                // surfaced by the manager
+            } catch (error: unknown) {
+                onError?.(error, "Could not log the make-up dose");
             } finally {
                 setActingKey(null);
             }
         },
-        [onChanged]
+        [onChanged, onError]
     );
 
     const pendingCount = today.length - doneCount;

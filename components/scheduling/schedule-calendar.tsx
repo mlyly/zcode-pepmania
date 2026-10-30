@@ -34,6 +34,8 @@ export interface ScheduleCalendarProps {
     onSelectDate: (date: Date) => void;
     /** Called after a log/un-log mutation. */
     onChanged: () => void;
+    /** Called when a mutation fails (the manager shows the feedback line). */
+    onError?: (error: unknown, prefix: string) => void;
     busy?: boolean;
 }
 
@@ -50,6 +52,7 @@ export function ScheduleCalendar({
                                      selectedDate,
                                      onSelectDate,
                                      onChanged,
+                                     onError,
                                      busy = false,
                                  }: ScheduleCalendarProps) {
     const now = React.useMemo(() => new Date(), []);
@@ -122,13 +125,13 @@ export function ScheduleCalendar({
                     });
                 }
                 onChanged();
-            } catch {
-                // surfaced by the manager
+            } catch (error: unknown) {
+                onError?.(error, "Could not update the dose log");
             } finally {
                 setActingKey(null);
             }
         },
-        [data.doseLogs, onChanged]
+        [data.doseLogs, onChanged, onError]
     );
 
     const moveMonth = (delta: number) => {

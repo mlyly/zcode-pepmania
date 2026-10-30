@@ -3,15 +3,17 @@
 import * as React from "react";
 import Link from "next/link";
 import {useRouter, useSearchParams} from "next/navigation";
-import {AlertCircle, CalendarDays, CalendarRange, CheckCircle2, ListTodo, Plus, X,} from "lucide-react";
+import {AlertCircle, CalendarDays, CalendarRange, ListTodo, Plus,} from "lucide-react";
 
 import type {Medication, Schedule} from "@/lib/db/types";
+import {storageAwareMessage} from "@/lib/db/quota";
 import {dateOnlyIso, localDateFromIso} from "@/lib/scheduling/dates";
 import {deleteSchedule, setScheduleActive} from "@/lib/scheduling/service";
 import {formatNumber} from "@/lib/units";
 import {cn} from "@/lib/utils";
 
 import {ConfirmDialog} from "@/components/app/confirm-dialog";
+import {type Feedback, FeedbackLine} from "@/components/ui/feedback-line";
 import {Badge} from "@/components/ui/badge";
 import {Button} from "@/components/ui/button";
 import {Card, CardContent} from "@/components/ui/card";
@@ -28,8 +30,6 @@ import {medicationIndex, useTrackerData} from "./use-tracker-data";
 // ---------------------------------------------------------------------------
 
 type TabId = "today" | "calendar" | "schedules";
-
-type Feedback = { kind: "success" | "error"; message: string } | null;
 
 interface DeleteTarget {
     schedule: Schedule;
@@ -83,8 +83,7 @@ export function SchedulesManager() {
     );
 
     const reportError = React.useCallback((error: unknown, prefix: string) => {
-        const message = error instanceof Error ? error.message : String(error);
-        setFeedback({kind: "error", message: `${prefix}: ${message}`});
+        setFeedback({kind: "error", message: storageAwareMessage(error, prefix)});
     }, []);
 
     // Auto-dismiss success feedback.
@@ -206,32 +205,7 @@ export function SchedulesManager() {
     return (
         <div className="flex flex-col gap-3">
             {/* Feedback line */}
-            {feedback && (
-                <p
-                    role="status"
-                    className={cn(
-                        "flex items-center gap-1.5 text-sm",
-                        feedback.kind === "success"
-                            ? "text-emerald-600 dark:text-emerald-400"
-                            : "text-destructive"
-                    )}
-                >
-                    {feedback.kind === "success" ? (
-                        <CheckCircle2 className="size-4 shrink-0" aria-hidden/>
-                    ) : (
-                        <AlertCircle className="size-4 shrink-0" aria-hidden/>
-                    )}
-                    {feedback.message}
-                    <button
-                        type="button"
-                        onClick={() => setFeedback(null)}
-                        aria-label="Dismiss"
-                        className="text-muted-foreground hover:text-foreground ml-1"
-                    >
-                        <X className="size-3.5" aria-hidden/>
-                    </button>
-                </p>
-            )}
+            <FeedbackLine feedback={feedback} onDismiss={() => setFeedback(null)}/>
 
             {/* Tab bar */}
             <div
@@ -246,7 +220,7 @@ export function SchedulesManager() {
                         aria-selected={tab === id}
                         onClick={() => setTab(id)}
                         className={cn(
-                            "inline-flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                            "tap inline-flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
                             tab === id
                                 ? "bg-primary text-primary-foreground"
                                 : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
@@ -262,6 +236,7 @@ export function SchedulesManager() {
                 <TodayChecklist
                     data={data}
                     onChanged={onChanged}
+                    onError={reportError}
                     busy={busyId !== null}
                     onManage={() => setTab("schedules")}
                 />
@@ -275,6 +250,7 @@ export function SchedulesManager() {
                             selectedDate={effectiveDate}
                             onSelectDate={selectDate}
                             onChanged={onChanged}
+                            onError={reportError}
                             busy={busyId !== null}
                         />
                     </CardContent>

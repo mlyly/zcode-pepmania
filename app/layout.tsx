@@ -4,6 +4,7 @@ import "./globals.css";
 
 import {LAST_COMMIT_HASH, LAST_MODIFIED, LAST_MODIFIED_TIME} from "@/lib/app-info";
 import {OfflineFooterMarker} from "./offline-footer-marker";
+import {OfflineBanner} from "@/components/app/offline-banner";
 import {ServiceWorkerRegister} from "@/components/pwa/service-worker-register";
 
 const geistSans = Geist({
@@ -75,9 +76,16 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <script dangerouslySetInnerHTML={{__html: themeInitScript}}/>
     </head>
     <body className="min-h-full flex flex-col">
+    <OfflineBanner/>
     {children}
     <footer className="mt-auto border-t">
-        <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-4 px-4 py-3 text-xs">
+        <div
+            className="mx-auto flex w-full max-w-3xl items-center justify-between gap-4 px-4 text-xs"
+            style={{
+                paddingTop: "0.75rem",
+                paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))",
+            }}
+        >
             <OfflineFooterMarker/>
             {LAST_MODIFIED && (
                 <p

@@ -1,20 +1,10 @@
 "use client";
 
 import * as React from "react";
-import {
-    AlertCircle,
-    CheckCircle2,
-    MoreHorizontal,
-    Pencil,
-    Plus,
-    Settings2,
-    Trash2,
-    TrendingDown,
-    TrendingUp,
-    X,
-} from "lucide-react";
+import {AlertCircle, MoreHorizontal, Pencil, Plus, Settings2, Trash2, TrendingDown, TrendingUp,} from "lucide-react";
 
 import type {MeasurementLog, MeasurementType} from "@/lib/db/types";
+import {storageAwareMessage} from "@/lib/db/quota";
 import {
     buildTrendRows,
     effectiveKind,
@@ -33,6 +23,7 @@ import {formatNumber} from "@/lib/units";
 import {cn} from "@/lib/utils";
 
 import {ConfirmDialog} from "@/components/app/confirm-dialog";
+import {type Feedback, FeedbackLine} from "@/components/ui/feedback-line";
 import {Badge} from "@/components/ui/badge";
 import {Button} from "@/components/ui/button";
 import {Card, CardContent} from "@/components/ui/card";
@@ -54,8 +45,6 @@ import {measurementTypeIndex, useMeasurementsData} from "./use-measurements-data
 // ---------------------------------------------------------------------------
 // State helpers
 // ---------------------------------------------------------------------------
-
-type Feedback = { kind: "success" | "error"; message: string } | null;
 
 interface DeleteLogTarget {
     log: MeasurementLog;
@@ -186,8 +175,7 @@ export function MeasurementsManager() {
     );
 
     const reportError = React.useCallback((error: unknown, prefix: string) => {
-        const message = error instanceof Error ? error.message : String(error);
-        setFeedback({kind: "error", message: `${prefix}: ${message}`});
+        setFeedback({kind: "error", message: storageAwareMessage(error, prefix)});
     }, []);
 
     // Auto-dismiss success feedback.
@@ -419,32 +407,7 @@ export function MeasurementsManager() {
     return (
         <div className="flex flex-col gap-3">
             {/* Feedback line */}
-            {feedback && (
-                <p
-                    role="status"
-                    className={cn(
-                        "flex items-center gap-1.5 text-sm",
-                        feedback.kind === "success"
-                            ? "text-emerald-600 dark:text-emerald-400"
-                            : "text-destructive"
-                    )}
-                >
-                    {feedback.kind === "success" ? (
-                        <CheckCircle2 className="size-4 shrink-0" aria-hidden/>
-                    ) : (
-                        <AlertCircle className="size-4 shrink-0" aria-hidden/>
-                    )}
-                    {feedback.message}
-                    <button
-                        type="button"
-                        onClick={() => setFeedback(null)}
-                        aria-label="Dismiss"
-                        className="text-muted-foreground hover:text-foreground ml-1"
-                    >
-                        <X className="size-3.5" aria-hidden/>
-                    </button>
-                </p>
-            )}
+            <FeedbackLine feedback={feedback} onDismiss={() => setFeedback(null)}/>
 
             {/* Tracker selector */}
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -601,7 +564,7 @@ export function MeasurementsManager() {
                                         onClick={() => setRange(option)}
                                         aria-pressed={range === option}
                                         className={cn(
-                                            "rounded-md px-2 py-1 text-xs font-medium transition-colors",
+                                            "tap rounded-md px-2 py-1 text-xs font-medium transition-colors",
                                             range === option
                                                 ? "bg-primary text-primary-foreground"
                                                 : "text-muted-foreground hover:bg-accent hover:text-foreground"

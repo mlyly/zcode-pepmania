@@ -2,14 +2,15 @@
 
 import * as React from "react";
 import Link from "next/link";
-import {AlertCircle, CheckCircle2, ClipboardList, Plus, Search, SearchX, X,} from "lucide-react";
+import {AlertCircle, ClipboardList, Plus, Search, SearchX,} from "lucide-react";
 
 import type {DoseLog} from "@/lib/db/types";
+import {storageAwareMessage} from "@/lib/db/quota";
 import {dateOnlyIso, formatRelativeDay, isSameLocalDay} from "@/lib/scheduling/dates";
 import {deleteDoseLog} from "@/lib/scheduling/service";
-import {cn} from "@/lib/utils";
 
 import {ConfirmDialog} from "@/components/app/confirm-dialog";
+import {type Feedback, FeedbackLine} from "@/components/ui/feedback-line";
 import {Badge} from "@/components/ui/badge";
 import {Button} from "@/components/ui/button";
 import {Card, CardContent} from "@/components/ui/card";
@@ -27,8 +28,6 @@ import {DoseLogRow} from "./dose-log-row";
 // ---------------------------------------------------------------------------
 
 type OriginFilter = "all" | "scheduled" | "adhoc";
-
-type Feedback = { kind: "success" | "error"; message: string } | null;
 
 interface DeleteTarget {
     log: DoseLog;
@@ -65,8 +64,7 @@ export function DoseLogsManager() {
     const [deleteTarget, setDeleteTarget] = React.useState<DeleteTarget | null>(null);
 
     const reportError = React.useCallback((error: unknown, prefix: string) => {
-        const message = error instanceof Error ? error.message : String(error);
-        setFeedback({kind: "error", message: `${prefix}: ${message}`});
+        setFeedback({kind: "error", message: storageAwareMessage(error, prefix)});
     }, []);
 
     // Auto-dismiss success feedback.
@@ -206,32 +204,7 @@ export function DoseLogsManager() {
     return (
         <div className="flex flex-col gap-3">
             {/* Feedback line */}
-            {feedback && (
-                <p
-                    role="status"
-                    className={cn(
-                        "flex items-center gap-1.5 text-sm",
-                        feedback.kind === "success"
-                            ? "text-emerald-600 dark:text-emerald-400"
-                            : "text-destructive"
-                    )}
-                >
-                    {feedback.kind === "success" ? (
-                        <CheckCircle2 className="size-4 shrink-0" aria-hidden/>
-                    ) : (
-                        <AlertCircle className="size-4 shrink-0" aria-hidden/>
-                    )}
-                    {feedback.message}
-                    <button
-                        type="button"
-                        onClick={() => setFeedback(null)}
-                        aria-label="Dismiss"
-                        className="text-muted-foreground hover:text-foreground ml-1"
-                    >
-                        <X className="size-3.5" aria-hidden/>
-                    </button>
-                </p>
-            )}
+            <FeedbackLine feedback={feedback} onDismiss={() => setFeedback(null)}/>
 
             {/* Toolbar */}
             <div className="flex flex-wrap items-center gap-2">

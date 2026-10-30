@@ -118,9 +118,75 @@
 @layer base {
     * {
         @apply border-border outline-ring/50;
-  }
+    }
 
     body {
         @apply bg-background text-foreground;
+    }
+}
+
+/* ---------------------------------------------------------------------------
+ * Touch targets (PWA) — grow interactive controls to comfortable tap sizes
+ * on coarse-pointer devices only, so the dense desktop layout is untouched.
+ * --------------------------------------------------------------------------- */
+
+/*
+ * `tap` — min 44px box on touch devices. Apply to custom interactive
+ * elements that aren't covered by the shared [data-slot] primitives below.
+ */
+@utility tap {
+    @media (pointer: coarse) {
+        min-height: 2.75rem;
+        min-width: 2.75rem;
+    }
+}
+
+@media (pointer: coarse) {
+    [data-slot="button"],
+    [data-slot="select-trigger"] {
+        min-height: 2.75rem;
+    }
+
+    /* Square targets for icon-only buttons and compact chips. */
+    [data-slot="button"][class*="size-"],
+    [data-slot="button"][class*="h-7"],
+    [data-slot="button"][class*="h-8"] {
+        min-width: 2.75rem;
+        min-height: 2.75rem;
+    }
+
+    /* Native form controls need a tappable height too (skip tiny radios/checks). */
+    input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+    select,
+    textarea {
+        min-height: 2.5rem;
+    }
+
+    /* Remove the tap-highlight flash and double-tap-zoom delay on taps. */
+    button,
+    a,
+    [role="checkbox"],
+    [role="switch"],
+    [role="tab"] {
+        touch-action: manipulation;
+        -webkit-tap-highlight-color: transparent;
+    }
+
+    /*
+     * Expand the hit area of small checkboxes/switches without changing their
+     * visual size. The pseudo-element belongs to the control itself, so taps
+     * inside the margin still toggle it; the Radix knob/indicator renders
+     * after ::after in tree order and stays visible on top.
+     */
+    [role="checkbox"],
+    [role="switch"] {
+        position: relative;
+    }
+
+    [role="checkbox"]::after,
+    [role="switch"]::after {
+        content: "";
+        position: absolute;
+        inset: -12px;
     }
 }

@@ -186,7 +186,7 @@ export function PkChartControls({
                                     }
                                     onClick={() => onToggleMedication(medication.id)}
                                     className={cn(
-                                        "inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors",
+                                        "tap inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors",
                                         "focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] focus-visible:outline-none",
                                         selected
                                             ? "bg-accent text-foreground shadow-xs"

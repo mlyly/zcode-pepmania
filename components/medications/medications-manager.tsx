@@ -1,9 +1,10 @@
 "use client";
 
 import * as React from "react";
-import {AlertCircle, ArrowDownUp, Boxes, CheckCircle2, Plus, Search, SearchX, X,} from "lucide-react";
+import {AlertCircle, ArrowDownUp, Boxes, Plus, Search, SearchX,} from "lucide-react";
 
 import {ConfirmDialog} from "@/components/app/confirm-dialog";
+import {type Feedback, FeedbackLine} from "@/components/ui/feedback-line";
 import {Badge} from "@/components/ui/badge";
 import {Button} from "@/components/ui/button";
 import {Card, CardContent} from "@/components/ui/card";
@@ -11,6 +12,7 @@ import {Input} from "@/components/ui/input";
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue,} from "@/components/ui/select";
 import {Skeleton} from "@/components/ui/skeleton";
 import {ensureDatabase, type Medication, type MedicationType, type Schedule} from "@/lib/db";
+import {storageAwareMessage} from "@/lib/db/quota";
 import {MEDICATION_TYPE_META, MEDICATION_TYPES} from "@/lib/medications/constants";
 import {inventoryStatus} from "@/lib/medications/derived";
 import {
@@ -21,7 +23,6 @@ import {
     listMedications,
     listSchedules,
 } from "@/lib/medications/service";
-import {cn} from "@/lib/utils";
 
 import {MedicationCard} from "./medication-card";
 import {MedicationFormDialog} from "./medication-form-dialog";
@@ -37,8 +38,6 @@ const STATUS_SEVERITY: Record<"out" | "low" | "ok", number> = {
     low: 1,
     ok: 2,
 };
-
-type Feedback = { kind: "success" | "error"; message: string } | null;
 
 interface DeleteTarget {
     medication: Medication;
@@ -72,8 +71,7 @@ export function MedicationsManager() {
     const [feedback, setFeedback] = React.useState<Feedback>(null);
 
     const reportError = React.useCallback((error: unknown, prefix: string) => {
-        const message = error instanceof Error ? error.message : String(error);
-        setFeedback({kind: "error", message: `${prefix}: ${message}`});
+        setFeedback({kind: "error", message: storageAwareMessage(error, prefix)});
     }, []);
 
     // Auto-dismiss success feedback.
@@ -310,32 +308,7 @@ export function MedicationsManager() {
     return (
         <div className="flex flex-col gap-3">
             {/* Feedback line */}
-            {feedback && (
-                <p
-                    role="status"
-                    className={cn(
-                        "flex items-center gap-1.5 text-sm",
-                        feedback.kind === "success"
-                            ? "text-emerald-600 dark:text-emerald-400"
-                            : "text-destructive"
-                    )}
-                >
-                    {feedback.kind === "success" ? (
-                        <CheckCircle2 className="size-4 shrink-0" aria-hidden/>
-                    ) : (
-                        <AlertCircle className="size-4 shrink-0" aria-hidden/>
-                    )}
-                    {feedback.message}
-                    <button
-                        type="button"
-                        onClick={() => setFeedback(null)}
-                        aria-label="Dismiss"
-                        className="text-muted-foreground hover:text-foreground ml-1"
-                    >
-                        <X className="size-3.5" aria-hidden/>
-                    </button>
-                </p>
-            )}
+            <FeedbackLine feedback={feedback} onDismiss={() => setFeedback(null)}/>
 
             {/* Toolbar */}
             <div className="flex flex-wrap items-center gap-2">

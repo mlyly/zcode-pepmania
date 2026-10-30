@@ -242,7 +242,7 @@ function ScheduleForm({schedule, medications, onSaved, onCancel}: ScheduleFormPr
                                                     aria-checked={selected}
                                                     onClick={() => field.onChange(type)}
                                                     className={cn(
-                                                        "rounded-md px-2 py-1.5 text-xs font-medium transition-colors",
+                                                        "tap rounded-md px-2 py-1.5 text-xs font-medium transition-colors",
                                                         selected
                                                             ? "bg-primary text-primary-foreground"
                                                             : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
@@ -285,7 +285,7 @@ function ScheduleForm({schedule, medications, onSaved, onCancel}: ScheduleFormPr
                                                             )
                                                         }
                                                         className={cn(
-                                                            "h-8 w-9 rounded-md border text-xs font-medium tabular-nums transition-colors",
+                                                            "tap h-8 w-9 rounded-md border text-xs font-medium tabular-nums transition-colors",
                                                             selected
                                                                 ? "border-primary bg-primary text-primary-foreground"
                                                                 : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"

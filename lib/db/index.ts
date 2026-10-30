@@ -7,6 +7,7 @@ export * from "./migration-manager";
 export * from "./export";
 export * from "./cryptography";
 export * from "./wipe";
+export * from "./quota";
 
 let inFlight: Promise<MigrationResult> | null = null;
 
