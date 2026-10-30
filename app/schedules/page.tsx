@@ -1,6 +1,7 @@
 import type {Metadata} from "next";
 import {Suspense} from "react";
 
+import {BackButton} from "@/components/app/back-button";
 import {StatusBadges} from "@/components/app/storage-status";
 import {SchedulesManager} from "@/components/scheduling/schedules-manager";
 import {Skeleton} from "@/components/ui/skeleton";
@@ -15,6 +16,7 @@ export default function SchedulesPage() {
     return (
         <div className="flex flex-1 flex-col items-center gap-8 px-4 py-12">
             <header className="flex w-full max-w-3xl flex-col gap-3">
+                <BackButton/>
                 <h1 className="text-2xl font-semibold tracking-tight">Schedules</h1>
                 <p className="text-muted-foreground max-w-2xl">
                     Set how often and when to take each medication — daily, on specific
