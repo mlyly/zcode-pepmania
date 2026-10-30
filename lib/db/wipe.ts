@@ -4,7 +4,8 @@
  * Removes every app-owned storage area from the browser origin:
  *   - IndexedDB databases (the `peptimania` database and any legacy clones)
  *   - localStorage + sessionStorage
- *   - Cache Storage entries created by the service worker (`peptimania-*`)
+ *   - Cache Storage entries created by the service worker (Serwist precache
+ *     and runtime caches, plus any legacy `peptimania-*` caches)
  *   - Service worker registrations
  *
  * Nothing is transmitted anywhere — deletion is purely local. Callers should
@@ -14,7 +15,6 @@
 import {DATABASE_NAME, db} from "./database";
 
 const DB_NAME_PREFIX = "peptimania";
-const CACHE_NAME_PREFIX = "peptimania";
 
 export interface WipeResult {
     /** Deleted IndexedDB database names. */
@@ -89,12 +89,13 @@ export async function wipeAllLocalData(): Promise<WipeResult> {
     } catch { /* ignore */
     }
 
-    // 3. Cache Storage (service worker caches, e.g. "peptimania-v1")
+    // 3. Cache Storage (Serwist precache + runtime caches). This origin only
+    // hosts this app, and every cache belongs to its service worker, so delete
+    // them all rather than relying on a cache-name prefix.
     try {
         const cacheNames = await caches.keys();
-        const stale = cacheNames.filter((n) => n.startsWith(CACHE_NAME_PREFIX));
-        await Promise.all(stale.map((n) => caches.delete(n)));
-        result.caches = stale;
+        await Promise.all(cacheNames.map((n) => caches.delete(n)));
+        result.caches = cacheNames;
     } catch { /* ignore */
     }
 
