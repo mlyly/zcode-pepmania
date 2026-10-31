@@ -16,19 +16,19 @@ import {
     concentrationSuffix,
     convertConcentration,
     formatConcentration,
-    formatDoseAmount,
     resolveChartWindow,
 } from "@/lib/pharmacokinetics/charting";
 import {formatDay} from "@/lib/scheduling/dates";
 import {formatNumber} from "@/lib/units";
 import {cn} from "@/lib/utils";
 
+import {DoseReadout} from "@/components/medications/dose-readout";
 import {Badge} from "@/components/ui/badge";
 import {Button} from "@/components/ui/button";
 import {Card, CardContent, CardDescription, CardHeader, CardTitle,} from "@/components/ui/card";
 import {Skeleton} from "@/components/ui/skeleton";
 
-import {useTrackerData} from "@/components/scheduling/use-tracker-data";
+import {medicationIndex, useTrackerData} from "@/components/scheduling/use-tracker-data";
 import {PkChartControls} from "./pk-chart-controls";
 import {PkConcentrationChart} from "./pk-concentration-chart";
 
@@ -136,6 +136,11 @@ export function PkChartDashboard() {
         });
         return map;
     }, [data.medications]);
+
+    const medicationsById = React.useMemo(
+        () => medicationIndex(data.medications),
+        [data.medications]
+    );
 
     // Real clock, refreshed each minute; pins the Now line to the start of
     // the third slot via resolveChartWindow's fixed 2/3–1/3 split.
@@ -491,10 +496,23 @@ export function PkChartDashboard() {
                                                         </span>
                                                     </span>
                                                     <span
-                                                        className="text-muted-foreground tabular-nums whitespace-nowrap">
-                                                        {instantLabel.format(dose.timestamp)}{" "}
-                                                        ·{" "}
-                                                        {formatDoseAmount(dose.amountMg, unit)}
+                                                        className="text-muted-foreground flex flex-wrap items-center gap-x-1.5 text-xs tabular-nums">
+                                                        <span className="whitespace-nowrap">
+                                                            {instantLabel.format(dose.timestamp)}
+                                                        </span>
+                                                        <span aria-hidden>·</span>
+                                                        <DoseReadout
+                                                            amount={convertConcentration(
+                                                                dose.amountMg,
+                                                                unit
+                                                            )}
+                                                            unit={unit}
+                                                            medication={
+                                                                medicationsById.get(
+                                                                    dose.medicationId
+                                                                ) ?? null
+                                                            }
+                                                        />
                                                     </span>
                                                 </li>
                                             );

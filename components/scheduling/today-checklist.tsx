@@ -19,9 +19,10 @@ import {formatClockTime, formatDay} from "@/lib/scheduling/dates";
 import {prefilledDoseAmount} from "@/lib/scheduling/derived";
 import {dayOccurrences, matchingDoseLog, missedOccurrences, type Occurrence,} from "@/lib/scheduling/occurrences";
 import {deleteDoseLog, logDose, logDoses} from "@/lib/scheduling/service";
-import {formatAmount, parseDecimalInput} from "@/lib/units";
+import {parseDecimalInput} from "@/lib/units";
 import {cn} from "@/lib/utils";
 
+import {DoseReadout} from "@/components/medications/dose-readout";
 import type {TrackerData} from "./use-tracker-data";
 
 export interface ChecklistItem {
@@ -356,19 +357,20 @@ export function ChecklistRow({
             <div className="min-w-0 flex-1">
                 <p className="truncate text-sm leading-tight font-medium">
                     {medication?.name ?? "Unknown medication"}
-                    <span className="text-muted-foreground font-normal">
-                        {" "}
-                        · {formatAmount(occurrence.doseAmount, occurrence.unit)}
-                    </span>
                 </p>
-                <p className="mt-0.5 flex items-center gap-2 text-xs">
+                <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
+                    <DoseReadout
+                        amount={occurrence.doseAmount}
+                        unit={occurrence.unit}
+                        medication={medication}
+                    />
                     <span className="text-muted-foreground tabular-nums">
                         {formatClockTime(occurrence.scheduledAt)}
                     </span>
                     <span className={cn("font-medium", STATUS_LINE[status].className)}>
                         {STATUS_LINE[status].label}
                     </span>
-                </p>
+                </div>
             </div>
             {meta && (
                 <span
@@ -424,14 +426,17 @@ function MissedRow({
             <div className="min-w-0 flex-1">
                 <p className="truncate text-sm">
                     {item.medication?.name ?? "Unknown medication"}
-                    <span className="text-muted-foreground">
-                        {" "}
-                        · {formatAmount(item.occurrence.doseAmount, item.occurrence.unit)}
-                    </span>
                 </p>
-                <p className="text-muted-foreground text-xs tabular-nums">
-                    {formatDay(item.occurrence.date)} · {formatClockTime(item.occurrence.scheduledAt)}
-                    · not logged
+                <p className="text-muted-foreground mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs tabular-nums">
+                    <DoseReadout
+                        amount={item.occurrence.doseAmount}
+                        unit={item.occurrence.unit}
+                        medication={item.medication}
+                    />
+                    <span>
+                        {formatDay(item.occurrence.date)} ·{" "}
+                        {formatClockTime(item.occurrence.scheduledAt)} · not logged
+                    </span>
                 </p>
             </div>
             <Button

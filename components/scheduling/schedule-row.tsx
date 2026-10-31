@@ -8,9 +8,9 @@ import {medicationTypeMeta} from "@/lib/medications/constants";
 import {timeSlotFor} from "@/lib/scheduling/constants";
 import {formatRelativeDay} from "@/lib/scheduling/dates";
 import {nextOccurrence, occurrenceScheduleSummary,} from "@/lib/scheduling/occurrences";
-import {formatAmount} from "@/lib/units";
 import {cn} from "@/lib/utils";
 
+import {DoseReadout} from "@/components/medications/dose-readout";
 import {Badge} from "@/components/ui/badge";
 import {Button} from "@/components/ui/button";
 import {Card} from "@/components/ui/card";
@@ -61,12 +61,14 @@ export function ScheduleRow({
                     <div className="min-w-0">
                         <p className="truncate text-sm leading-tight font-semibold">
                             {medication?.name ?? "Unknown medication"}
-                            <span className="text-muted-foreground font-normal">
-                                {" "}
-                                · {formatAmount(schedule.doseAmount, schedule.unit)}
-                            </span>
                         </p>
                         <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                            <DoseReadout
+                                amount={schedule.doseAmount}
+                                unit={schedule.unit}
+                                medication={medication}
+                                className="text-xs"
+                            />
                             <Badge variant="outline" className="px-1.5 py-0 text-[11px]">
                                 {occurrenceScheduleSummary(schedule)}
                             </Badge>

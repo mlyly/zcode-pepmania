@@ -4,11 +4,11 @@ import * as React from "react";
 import {CalendarClock, FlaskConical, TriangleAlert} from "lucide-react";
 
 import type {DoseUnit, Medication, Schedule} from "@/lib/db/types";
-import {concentrationLabel, dosesPerVial, doseVolumeMl, scheduleFrequencyLabel,} from "@/lib/medications/derived";
+import {concentrationLabel, dosesPerVial, scheduleFrequencyLabel,} from "@/lib/medications/derived";
 import {formatAmount, formatNumber, IU_FALLBACK_WARNING} from "@/lib/units";
 import {cn} from "@/lib/utils";
 
-import {SyringeMeter} from "./syringe-meter";
+import {DoseReadout} from "./dose-readout";
 
 // ---------------------------------------------------------------------------
 // Concentration summary
@@ -103,32 +103,22 @@ export function ScheduleVolumeList({
     if (schedules.length === 0) return null;
     return (
         <div className={cn("flex flex-col gap-1.5", className)}>
-            {schedules.map((schedule) => {
-                const volume = doseVolumeMl(
-                    schedule.doseAmount,
-                    schedule.unit,
-                    medication
-                );
-                return (
-                    <div
-                        key={schedule.id}
-                        className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1"
-                    >
-                        <span className="text-muted-foreground min-w-0 truncate text-xs">
-                            <span className="text-foreground font-medium tabular-nums">
-                                {formatAmount(schedule.doseAmount, schedule.unit)}
-                            </span>
-                            {" · "}
-                            {scheduleFrequencyLabel(schedule)} · {schedule.timeOfDay}
-                        </span>
-                        {volume !== null ? (
-                            <SyringeMeter ml={volume}/>
-                        ) : (
-                            <span className="text-muted-foreground text-xs">—</span>
-                        )}
-                    </div>
-                );
-            })}
+            {schedules.map((schedule) => (
+                <div
+                    key={schedule.id}
+                    className="text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1 text-xs"
+                >
+                    <DoseReadout
+                        amount={schedule.doseAmount}
+                        unit={schedule.unit}
+                        medication={medication}
+                        variant="syringe"
+                    />
+                    <span className="min-w-0 truncate">
+                        {scheduleFrequencyLabel(schedule)} · {schedule.timeOfDay}
+                    </span>
+                </div>
+            ))}
         </div>
     );
 }
