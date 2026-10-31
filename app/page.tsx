@@ -1,43 +1,8 @@
 import Link from "next/link";
-import {Activity, ArrowUpRight, CalendarCheck2, ChartSpline, ClipboardList, Pill, Settings} from "lucide-react";
+import {Activity, CalendarCheck2, ChartSpline, ClipboardList, Pill, Settings} from "lucide-react";
 
 import {Button} from "@/components/ui/button";
-import {StatusBadges, StorageStatus} from "@/components/app/storage-status";
-import {Card, CardContent, CardDescription, CardHeader, CardTitle} from "@/components/ui/card";
 import {DashboardChecklist} from "@/components/scheduling/dashboard-checklist";
-
-const modules: {
-    title: string;
-    description: string;
-    /** Route for implemented modules; planned ones render without a link. */
-    href?: "/medications" | "/schedules" | "/dose-logs" | "/pharmacokinetics" | "/measurements";
-}[] = [
-    {
-        title: "Quick Log",
-        description: "One-tap completion of today's scheduled doses, with make-up logging.",
-        href: "/schedules",
-    },
-    {
-        title: "Active Inventory",
-        description: "Compact status cards with low-stock badges.",
-        href: "/medications",
-    },
-    {
-        title: "Dose Log",
-        description: "Day-grouped history of every logged dose — search, filter, edit and re-time.",
-        href: "/dose-logs",
-    },
-    {
-        title: "Pharmacokinetics",
-        description: "Concentration decay curves, multi-medication overlay.",
-        href: "/pharmacokinetics"
-    },
-    {
-        title: "Body Metrics",
-        description: "Weight, blood pressure and custom trackers with trend charts and quick logging.",
-        href: "/measurements",
-    },
-];
 
 export default function Home() {
   return (
@@ -90,56 +55,12 @@ export default function Home() {
                   A privacy-first peptide &amp; medication tracker. Everything runs in
                   your browser and keeps working offline.
               </p>
-              <StatusBadges/>
           </header>
 
           <main className="flex w-full max-w-3xl flex-col gap-4">
-              <StorageStatus/>
-
               {/* Live "Today's Doses" checklist (Quick Log) — the dashboard's
                   working module. Boots the local DB itself. */}
               <DashboardChecklist manageHref="/schedules"/>
-
-              <Card>
-                  <CardHeader>
-                      <CardTitle className="text-base">Dashboard modules</CardTitle>
-                      <CardDescription>
-                          The tracker’s surface — inventory, scheduling, dose history,
-                          concentration charts and body metrics are all live.
-                      </CardDescription>
-                  </CardHeader>
-                  <CardContent className="grid gap-4 sm:grid-cols-2">
-                      {modules.map((m) => {
-                          const body = (
-                              <>
-                                  <p className="text-sm font-medium">{m.title}</p>
-                                  <p className="text-muted-foreground mt-1 text-sm">
-                                      {m.description}
-                                  </p>
-                              </>
-                          );
-                          return m.href ? (
-                              <Link
-                                  key={m.title}
-                                  href={m.href}
-                                  className="rounded-lg border p-3 transition-colors hover:bg-accent/50"
-                              >
-                                  <div className="flex items-start justify-between gap-2">
-                                      <div className="min-w-0">{body}</div>
-                                      <ArrowUpRight
-                                          className="text-muted-foreground size-4 shrink-0"
-                                          aria-hidden
-                                      />
-                                  </div>
-                              </Link>
-                          ) : (
-                              <div key={m.title} className="rounded-lg border p-3">
-                                  {body}
-                              </div>
-                          );
-                      })}
-                  </CardContent>
-              </Card>
       </main>
     </div>
   );

@@ -15,8 +15,8 @@ import {useTrackerData} from "./use-tracker-data";
  * and keeps its own copy of the data (the dashboard has no other data source).
  * Used from the home page; the /schedules manager provides its data instead.
  *
- * Boot failures stay compact (the StorageStatus card on the dashboard carries
- * the authoritative database message); mutation failures get their own
+ * Boot failures stay compact (the StorageStatus card on Settings carries the
+ * authoritative database message); mutation failures get their own
  * dismissible feedback line so a lost check-off is never silent.
  */
 export function DashboardChecklist({manageHref}: { manageHref?: string }) {

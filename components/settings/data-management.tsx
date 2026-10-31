@@ -629,7 +629,7 @@ export function DataManagement() {
     const bumpStats = React.useCallback(() => setStatsSignal((n) => n + 1), []);
 
     // The migration pipeline must complete before any table is touched
-    // (mirrors StorageStatus on the home page, which runs first there).
+    // (mirrors the StorageStatus card rendered above this one on Settings).
     React.useEffect(() => {
         let active = true;
         ensureDatabase()

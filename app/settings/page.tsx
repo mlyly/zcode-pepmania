@@ -1,7 +1,7 @@
 import type {Metadata} from "next";
 
 import {BackButton} from "@/components/app/back-button";
-import {StatusBadges} from "@/components/app/storage-status";
+import {StatusBadges, StorageStatus} from "@/components/app/storage-status";
 import {DataManagement} from "@/components/settings/data-management";
 
 export const metadata: Metadata = {
@@ -26,6 +26,7 @@ export default function SettingsPage() {
             </header>
 
             <main className="flex w-full max-w-2xl flex-col gap-4">
+                <StorageStatus/>
                 <DataManagement/>
             </main>
         </div>
