@@ -92,11 +92,11 @@ const NOW = d(2026, 1, 15, 10, 30);
 const NOW_ISO = NOW.toISOString();
 
 async function main() {
-    // ============================================================ v5 pipeline
+    // ============================================================ v7 pipeline
     const result = await ensureDatabase();
     check(
-        "fresh database lands at v5 (additive measurements migration)",
-        LATEST_SCHEMA_VERSION === 5 && result.to === 5,
+        "fresh database lands at v7",
+        LATEST_SCHEMA_VERSION === 7 && result.to === 7,
         `to=${result.to}`
     );
 

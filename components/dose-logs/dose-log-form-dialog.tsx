@@ -6,7 +6,7 @@ import {zodResolver} from "@hookform/resolvers/zod";
 import {TriangleAlert} from "lucide-react";
 
 import type {DoseLog, Medication, Schedule} from "@/lib/db/types";
-import {DOSE_UNITS, medicationTypeMeta} from "@/lib/medications/constants";
+import {DOSE_UNITS, doseUnitLabel, medicationTypeMeta} from "@/lib/medications/constants";
 import {CUSTOM_SITE, INJECTION_SITES, UNSPECIFIED_SITE} from "@/lib/scheduling/constants";
 import {doseLogFormSchema, type DoseLogFormValues, doseLogToFormValues, toDoseLogInput,} from "@/lib/scheduling/schema";
 import {logDose, updateDoseLog} from "@/lib/scheduling/service";
@@ -167,7 +167,7 @@ function DoseLogForm({log, medications, schedules, onSaved, onCancel}: DoseLogFo
                                     <SelectContent>
                                         {DOSE_UNITS.map((value) => (
                                             <SelectItem key={value} value={value}>
-                                                {value === "mL" ? "mL (volume)" : value}
+                                                {doseUnitLabel(value)}
                                             </SelectItem>
                                         ))}
                                     </SelectContent>

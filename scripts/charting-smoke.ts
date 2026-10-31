@@ -181,7 +181,9 @@ function main() {
         name: "Testide",
         type: "peptide",
         unit: "mg",
-        inventory: {currentQuantity: 5, vialCount: 1, containerSize: 5},
+        inventory: {
+            lots: [{id: "lot-1", vialCount: 1, contentAmount: 5, contentUnit: "mg"}],
+        },
         halfLifeHours: 24,
         createdAt: NOW.toISOString(),
         updatedAt: NOW.toISOString(),

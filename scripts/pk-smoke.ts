@@ -60,7 +60,9 @@ function medication(
         name: `Med ${id}`,
         type: "peptide",
         unit: "mg",
-        inventory: {currentQuantity: 10, vialCount: 2, containerSize: 5},
+        inventory: {
+            lots: [{id: `${id}-lot`, vialCount: 2, contentAmount: 5, contentUnit: "mg"}],
+        },
         halfLifeHours,
         createdAt: NOW.toISOString(),
         updatedAt: NOW.toISOString(),

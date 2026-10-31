@@ -6,7 +6,7 @@ import {zodResolver} from "@hookform/resolvers/zod";
 import {CalendarClock, TriangleAlert} from "lucide-react";
 
 import type {Medication, Schedule} from "@/lib/db/types";
-import {medicationTypeMeta} from "@/lib/medications/constants";
+import {DOSE_UNITS, doseUnitLabel, medicationTypeMeta} from "@/lib/medications/constants";
 import {
     CUSTOM_SLOT,
     FREQUENCY_LABELS,
@@ -178,7 +178,7 @@ function ScheduleForm({schedule, medications, onSaved, onCancel}: ScheduleFormPr
                                     </FormControl>
                                     <span
                                         className="text-muted-foreground pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs">
-                                        {watched.unit ?? "mg"}
+                                        {doseUnitLabel(watched.unit ?? "mg")}
                                     </span>
                                 </div>
                                 <FormDescription>
@@ -202,9 +202,9 @@ function ScheduleForm({schedule, medications, onSaved, onCancel}: ScheduleFormPr
                                         </SelectTrigger>
                                     </FormControl>
                                     <SelectContent>
-                                        {(["mg", "mcg", "IU", "mL"] as const).map((value) => (
+                                        {DOSE_UNITS.map((value) => (
                                             <SelectItem key={value} value={value}>
-                                                {value === "mL" ? "mL (volume)" : value}
+                                                {doseUnitLabel(value)}
                                             </SelectItem>
                                         ))}
                                     </SelectContent>

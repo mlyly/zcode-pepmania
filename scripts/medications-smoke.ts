@@ -4,9 +4,10 @@
  *
  *   npx tsx scripts/medications-smoke.ts
  *
- * Exercises: the v1 → v2 data migration (legacy type remap + snapshot twin),
- * service CRUD (zod-validated, PUT semantics), inventory adjustments, delete
- * cascade, and the reconstitution/stock derived math.
+ * Exercises: the v1 → v7 data migration (legacy type remap + inventory lot
+ * folding + snapshot twin), service CRUD (zod-validated, PUT semantics),
+ * multi-lot inventory adjustments, lot pricing, delete cascade, and the
+ * reconstitution / stock derived math.
  */
 import "fake-indexeddb/auto";
 
@@ -22,17 +23,28 @@ import {
 } from "../lib/db";
 import {
     activeSchedulesFor,
+    amountInMedicationUnit,
     concentrationLabel,
     dailyAmountInUnit,
     daysOfStockRemaining,
     dosesPerVial,
     doseVolumeMl,
+    formatStockDuration,
+    inventoryPriceTotals,
+    inventoryQuantity,
     inventoryStatus,
+    inventoryTotals,
+    lotTotalPrice,
     reconstitutionConcentration,
     stockRatio,
 } from "../lib/medications/derived";
 import type {MedicationInput} from "../lib/medications/schema";
-import {medicationFormSchema, medicationToFormValues, toMedicationInput,} from "../lib/medications/schema";
+import {
+    medicationFormSchema,
+    medicationToFormValues,
+    newInventoryLotFormValues,
+    toMedicationInput,
+} from "../lib/medications/schema";
 import {
     adjustInventory,
     countLinkedRecords,
@@ -66,19 +78,20 @@ async function expectError(label: string, fn: () => Promise<unknown>) {
 const now = new Date().toISOString();
 
 async function main() {
-    // ------------------------------------------------------------------ v2
+    // ------------------------------------------------------------ v7
     const result = await ensureDatabase();
     check(
-        "fresh database stamps schema v5",
-        result.to === LATEST_SCHEMA_VERSION && LATEST_SCHEMA_VERSION === 5,
+        "fresh database stamps schema v7",
+        result.to === LATEST_SCHEMA_VERSION && LATEST_SCHEMA_VERSION === 7,
         `got ${result.to}`
     );
 
-    // ------------------------------------------------- v1 → v2 migration
-    // Simulate a legacy database: v1 meta row + generic "medication" row.
+    // ------------------------------------------------- v1 → v7 migration
+    // Simulate a legacy database: v1 meta row + generic "medication" rows with
+    // the pre-v6 aggregate inventory object.
     await db.medications.clear();
     await db.meta.put({key: SCHEMA_VERSION_KEY, value: 1});
-    const legacyMedications: Medication[] = [
+    const legacyMedications = [
         {
             id: "legacy-1",
             name: "Metformin",
@@ -107,16 +120,28 @@ async function main() {
             createdAt: now,
             updatedAt: now,
         },
-    ];
+        {
+            id: "legacy-4",
+            name: "mL peptide",
+            type: "peptide",
+            unit: "mL",
+            reconstitution: {vialQuantity: 5, vialQuantityUnit: "mg", bacWaterAmountMl: 2},
+            inventory: {currentQuantity: 4, vialCount: 2, containerSize: 2},
+            createdAt: now,
+            updatedAt: now,
+        },
+    ] as unknown as Medication[];
     await db.medications.bulkPut(legacyMedications);
 
     const migrated = await runMigrations();
     const afterMigration = await db.medications.toArray();
     const byId = new Map(afterMigration.map((m) => [m.id, m]));
     check(
-        "migration reports v1 → v5 (v2 + v3 + v4 + v5 applied)",
-        migrated.from === 1 && migrated.to === 5,
-        `got ${migrated.from} → ${migrated.to}`
+        "migration reports v1 → v7",
+        migrated.from === 1 &&
+        migrated.to === 7 &&
+        migrated.applied.join() === "2,3,4,5,6,7",
+        `got ${migrated.from} → ${migrated.to} (${migrated.applied.join()})`
     );
     check(
         "legacy 'medication' remapped to 'pill'",
@@ -128,6 +153,25 @@ async function main() {
         "unknown types collapse to 'other'",
         byId.get("legacy-3")?.type === "other",
         `got ${byId.get("legacy-3")?.type}`
+    );
+    const legacyLot = byId.get("legacy-1")?.inventory;
+    check(
+        "legacy inventory folds into one synthetic lot",
+        legacyLot?.lots.length === 1 &&
+        legacyLot.lots[0].vialCount === 1 &&
+        legacyLot.lots[0].contentAmount === 60 &&
+        legacyLot.lots[0].contentUnit === "mg" &&
+        legacyLot.lowStockThreshold === 10,
+        JSON.stringify(legacyLot)
+    );
+    const legacyMl = byId.get("legacy-4")?.inventory;
+    check(
+        "mL peptide lot records the vial mass from reconstitution",
+        legacyMl?.lots.length === 1 &&
+        legacyMl.lots[0].vialCount === 2 &&
+        legacyMl.lots[0].contentAmount === 5 &&
+        legacyMl.lots[0].contentUnit === "mg",
+        JSON.stringify(legacyMl)
     );
     check(
         "pre-migration backup was written",
@@ -150,12 +194,51 @@ async function main() {
         `got ${snapshot.medications.map((m) => m.type).join(",")}`
     );
 
+    const snapshotV6 = {
+        schemaVersion: 5,
+        medications: [
+            {
+                id: "snap-1",
+                unit: "mg",
+                type: "pill",
+                inventory: {currentQuantity: 30, vialCount: 2, lowStockThreshold: 5},
+            },
+        ],
+    };
+    MIGRATIONS.find((m) => m.version === 6)?.upSnapshot?.(snapshotV6);
+    const snapInventory = (snapshotV6.medications[0] as unknown as Medication).inventory;
+    check(
+        "v6 upSnapshot folds legacy inventory into lots",
+        snapInventory.lots.length === 1 &&
+        snapInventory.lots[0].vialCount === 2 &&
+        snapInventory.lots[0].contentAmount === 15 &&
+        snapInventory.lowStockThreshold === 5,
+        JSON.stringify(snapInventory)
+    );
+
+    const snapshotV7 = {
+        schemaVersion: 6,
+        medications: [
+            {
+                id: "snap-pricing",
+                inventory: {
+                    lots: [
+                        {id: "p1", vialCount: 1, contentAmount: 5, contentUnit: "mg"},
+                    ],
+                },
+            },
+        ],
+    };
+    const beforeV7 = JSON.stringify(snapshotV7);
+    MIGRATIONS.find((m) => m.version === 7)?.upSnapshot?.(snapshotV7);
+    check("v7 is additive: unpriced lots pass through untouched", JSON.stringify(snapshotV7) === beforeV7);
+
     // Exports must still round-trip at the current schema.
     const payload = await buildExportPayload();
     check(
         "export carries the current schema",
         payload.data.schemaVersion === LATEST_SCHEMA_VERSION &&
-        payload.data.medications.length === 3
+        payload.data.medications.length === 4
     );
 
     // ------------------------------------------------------- unit math
@@ -163,6 +246,8 @@ async function main() {
     check("2,500 mcg → 2.5 mg", convertUnit(2500, "mcg", "mg")?.value === 2.5);
     check("IU conversion flags fallback", convertUnit(100, "IU", "mg")?.iuFallback === true);
     check("mL has no direct conversion", convertUnit(1, "mL", "mg") === null);
+    check("pcs only converts to itself", convertUnit(5, "pcs", "pcs")?.value === 5 &&
+        convertUnit(5, "pcs", "mg") === null);
     check("0.1 mL = 10 U-100 units", mlToSyringeUnits(0.1) === 10);
 
     // --------------------------------------------------------- service
@@ -173,8 +258,15 @@ async function main() {
         unit: "mcg",
         halfLifeHours: 4,
         inventory: {
-            vialCount: 1,
-            containerSize: 5000,
+            lots: [
+                {
+                    id: "bpc-lot-1",
+                    vialCount: 1,
+                    contentAmount: 5000,
+                    contentUnit: "mcg",
+                    pricePerContainer: 25,
+                },
+            ],
             lowStockThreshold: 1000,
         },
         reconstitution: {vialQuantity: 5, vialQuantityUnit: "mg", bacWaterAmountMl: 2},
@@ -183,16 +275,26 @@ async function main() {
     const created = await createMedication(bpcInput);
     check("create stores and timestamps the row", created.id.length > 0 && created.createdAt === created.updatedAt);
     check(
-        "stock derives from vials × per-vial",
-        created.inventory.currentQuantity === 5000,
-        `got ${created.inventory.currentQuantity}`
+        "stock derives from lot containers × content",
+        inventoryQuantity(created) === 5000,
+        `got ${inventoryQuantity(created)}`
+    );
+    check(
+        "lot pricing persists and totals per container",
+        created.inventory.lots[0].pricePerContainer === 25 &&
+        lotTotalPrice(created.inventory.lots[0]) === 25 &&
+        inventoryPriceTotals(created).totalPrice === 25,
+        JSON.stringify(created.inventory.lots[0])
     );
 
-    await expectError("non-positive per-vial amount rejected", () =>
+    await expectError("non-positive container content rejected", () =>
         createMedication({
             ...bpcInput,
             name: "Bad",
-            inventory: {...bpcInput.inventory, containerSize: 0},
+            inventory: {
+                ...bpcInput.inventory,
+                lots: [{...bpcInput.inventory.lots[0], contentAmount: 0}],
+            },
         })
     );
     await expectError("reconstitution with zero BAC water rejected", () =>
@@ -217,14 +319,62 @@ async function main() {
     // Restore full record for derived-math checks.
     const full = await updateMedication(created.id, bpcInput);
 
-    // Inventory stepper.
-    await adjustInventory(full.id, 5000, 1);
+    // Inventory stepper: +1 container tops up, large removals clamp at zero.
+    await adjustInventory(full.id, 1);
     let adjusted = await db.medications.get(full.id);
-    check("stepper adds a container", adjusted?.inventory.currentQuantity === 10000 && adjusted?.inventory.vialCount === 2);
-    await adjustInventory(full.id, -100000, -10);
+    check(
+        "stepper adds a container",
+        adjusted !== undefined && inventoryQuantity(adjusted) === 10000 &&
+        adjusted.inventory.lots[0].vialCount === 2,
+        JSON.stringify(adjusted?.inventory)
+    );
+    await adjustInventory(full.id, -10);
     adjusted = await db.medications.get(full.id);
-    check("stepper clamps at zero", adjusted?.inventory.currentQuantity === 0 && adjusted?.inventory.vialCount === 0);
-    await adjustInventory(full.id, 5000, 1);
+    check(
+        "stepper clamps at zero",
+        adjusted !== undefined && inventoryQuantity(adjusted) === 0 &&
+        inventoryTotals(adjusted).vialCount === 0,
+        JSON.stringify(adjusted?.inventory)
+    );
+    await adjustInventory(full.id, 1);
+
+    // FIFO / newest-first with dated lots.
+    const dated = await createMedication({
+        name: "FIFO test",
+        type: "pill",
+        unit: "pcs",
+        inventory: {
+            lots: [
+                {
+                    id: "old-lot",
+                    vialCount: 2,
+                    contentAmount: 30,
+                    contentUnit: "pcs",
+                    deliveryDate: "2026-01-01",
+                },
+                {
+                    id: "new-lot",
+                    vialCount: 1,
+                    contentAmount: 30,
+                    contentUnit: "pcs",
+                    deliveryDate: "2026-02-01",
+                },
+            ],
+        },
+    });
+    const afterFifo = await adjustInventory(dated.id, -2);
+    check(
+        "removal consumes the oldest lot first",
+        afterFifo.inventory.lots.find((lot) => lot.id === "old-lot")?.vialCount === 0 &&
+        afterFifo.inventory.lots.find((lot) => lot.id === "new-lot")?.vialCount === 1
+    );
+    const afterTopUp = await adjustInventory(dated.id, 1);
+    check(
+        "addition tops up the newest lot",
+        afterTopUp.inventory.lots.find((lot) => lot.id === "new-lot")?.vialCount === 2 &&
+        afterTopUp.inventory.lots.find((lot) => lot.id === "old-lot")?.vialCount === 0
+    );
+    await deleteMedication(dated.id);
 
     // --------------------------------------------------- derived math
     const bpc = (await db.medications.get(full.id))!;
@@ -270,31 +420,88 @@ async function main() {
         daysOfStockRemaining(bpc, schedules) === 20,
         `got ${daysOfStockRemaining(bpc, schedules)}`
     );
+    check("duration formatting", formatStockDuration(20) === "20 days" &&
+        formatStockDuration(0.5) === "< 1 day" &&
+        formatStockDuration(60) === "2 mo" &&
+        formatStockDuration(800) === "2 yr 2 mo",
+        `${formatStockDuration(20)} / ${formatStockDuration(60)} / ${formatStockDuration(800)}`);
+
+    // Multi-lot totals convert mass and reconstituted volume, and flag the
+    // lots that have no path to the medication unit.
+    const multiLot: Medication = {
+        ...bpc,
+        inventory: {
+            lots: [
+                {id: "m1", vialCount: 2, contentAmount: 5, contentUnit: "mg", pricePerContainer: 10},
+                {id: "m2", vialCount: 1, contentAmount: 1000, contentUnit: "mcg", pricePerContainer: 20},
+                {id: "m3", vialCount: 2, contentAmount: 2, contentUnit: "mL"},
+                {id: "m4", vialCount: 1, contentAmount: 10, contentUnit: "pcs"},
+            ],
+            lowStockThreshold: 1000,
+        },
+    };
+    const multiTotals = inventoryTotals(multiLot);
+    check(
+        "multi-lot totals convert mg, mcg and reconstructed mL",
+        multiTotals.quantity === 21000 &&
+        multiTotals.vialCount === 6 &&
+        multiTotals.lotCount === 4 &&
+        multiTotals.unconvertibleLots === 1,
+        JSON.stringify(multiTotals)
+    );
+    check(
+        "amount conversion handles volume via reconstitution",
+        amountInMedicationUnit(2, "mL", bpc)?.value === 5000,
+        `got ${amountInMedicationUnit(2, "mL", bpc)?.value}`
+    );
+    const multiPrices = inventoryPriceTotals(multiLot);
+    check(
+        "price totals sum priced lots and flag unpriced ones",
+        multiPrices.totalPrice === 40 &&
+        multiPrices.pricedLots === 2 &&
+        multiPrices.unpricedLots === 2,
+        JSON.stringify(multiPrices)
+    );
 
     const stocked: Medication = {
         ...bpc,
-        inventory: {currentQuantity: 5000, vialCount: 1, lowStockThreshold: 1000},
+        inventory: {
+            lots: [{id: "s1", vialCount: 1, contentAmount: 5000, contentUnit: "mcg"}],
+            lowStockThreshold: 1000,
+        },
     };
     check("status ok above threshold", inventoryStatus(stocked) === "ok");
     check(
         "status low at threshold",
-        inventoryStatus({...stocked, inventory: {...stocked.inventory, currentQuantity: 1000}}) === "low"
+        inventoryStatus({
+            ...stocked,
+            inventory: {
+                ...stocked.inventory,
+                lots: [{...stocked.inventory.lots[0], contentAmount: 1000}],
+            },
+        }) === "low"
     );
     check("status out at zero", inventoryStatus({
         ...stocked,
-        inventory: {...stocked.inventory, currentQuantity: 0}
+        inventory: {lots: [{...stocked.inventory.lots[0], vialCount: 0}]},
     }) === "out");
-    const ratio = stockRatio({...stocked, inventory: {...stocked.inventory, currentQuantity: 1000}});
+    const ratio = stockRatio({
+        ...stocked,
+        inventory: {
+            ...stocked.inventory,
+            lots: [{...stocked.inventory.lots[0], contentAmount: 1000}],
+        },
+    });
     check("stock ratio hits 50% at the threshold", Math.abs(ratio - 0.5) < 1e-9, `got ${ratio}`);
 
     // ------------------------------------------------- form schema pipeline
     const formValues = medicationToFormValues(); // create-mode defaults
     const invalidForm = medicationFormSchema.safeParse(formValues);
     check(
-        "blank form rejected (name + per-vial required)",
+        "blank form rejected (name + lot content required)",
         !invalidForm.success &&
         JSON.stringify(invalidForm.error.issues.map((i) => i.path.join("."))).includes("name") &&
-        JSON.stringify(invalidForm.error.issues.map((i) => i.path.join("."))).includes("containerSize")
+        JSON.stringify(invalidForm.error.issues.map((i) => i.path.join("."))).includes("inventoryLots.0.contentAmount")
     );
 
     const peptideForm = medicationToFormValues();
@@ -302,30 +509,56 @@ async function main() {
         name: "BPC-157",
         type: "peptide",
         unit: "mcg",
-        vialCount: "1",
-        containerSize: "5000",
         lowStockThreshold: "1000",
         halfLifeHours: "4",
         hasReconstitution: true,
-        // Ignored for mass-dosed peptides — the vial mass comes from the
-        // per-vial inventory amount instead of these fields.
+        // The vial mass is explicit and independent of the inventory lots.
         vialQuantity: "5",
         vialQuantityUnit: "mg",
         bacWaterAmountMl: "2",
         notes: "  Morning injection  ",
-    } satisfies Partial<typeof peptideForm>);
+    });
+    peptideForm.inventoryLots = [
+        {
+            ...newInventoryLotFormValues("mcg"),
+            id: "lot-form-1",
+            vialCount: "1",
+            contentAmount: "5000",
+            contentUnit: "mcg",
+            orderDate: "2026-01-02",
+            deliveryDate: "2026-01-05",
+            vendor: "  Example Labs  ",
+            pricePerContainer: "12.5",
+            coaUrlsText: "example.com/coa\nhttps://example.org/coa",
+            notes: "  Batch A  ",
+        },
+    ];
     const validForm = medicationFormSchema.safeParse(peptideForm);
     check("complete peptide form parses", validForm.success);
     const peptideInput = toMedicationInput(validForm.success ? validForm.data : peptideForm);
+    const peptideLot = peptideInput.inventory.lots[0];
     check(
         "form converts to canonical input",
         peptideInput.name === "BPC-157" &&
         peptideInput.halfLifeHours === 4 &&
-        peptideInput.inventory.vialCount === 1 &&
-        peptideInput.inventory.containerSize === 5000 &&
-        peptideInput.reconstitution?.vialQuantity === 5000 &&
-        peptideInput.reconstitution?.vialQuantityUnit === "mcg" &&
+        peptideInput.inventory.lots.length === 1 &&
+        peptideLot.vialCount === 1 &&
+        peptideLot.contentAmount === 5000 &&
+        peptideLot.contentUnit === "mcg" &&
+        peptideLot.orderDate === "2026-01-02" &&
+        peptideLot.deliveryDate === "2026-01-05" &&
+        peptideLot.vendor === "Example Labs" &&
+        peptideLot.pricePerContainer === 12.5 &&
+        peptideLot.notes === "Batch A" &&
+        peptideInput.reconstitution?.vialQuantity === 5 &&
+        peptideInput.reconstitution?.vialQuantityUnit === "mg" &&
         peptideInput.notes === "Morning injection"
+    );
+    check(
+        "COA links normalize and de-duplicate",
+        JSON.stringify(peptideLot.coaUrls) ===
+        JSON.stringify(["https://example.com/coa", "https://example.org/coa"]),
+        JSON.stringify(peptideLot.coaUrls)
     );
 
     const missingRecon = medicationFormSchema.safeParse({
@@ -338,72 +571,147 @@ async function main() {
         missingRecon.error.issues.some((i) => i.path[0] === "bacWaterAmountMl")
     );
 
-    // mL-dosed peptides: the vial mass is typed, the per-vial stock volume
-    // comes from the BAC water.
+    const missingVialMass = medicationFormSchema.safeParse({...peptideForm, vialQuantity: ""});
+    check(
+        "reconstitution requires an explicit vial mass",
+        !missingVialMass.success &&
+        missingVialMass.error.issues.some((i) => i.path[0] === "vialQuantity")
+    );
+
+    const badDates = medicationFormSchema.safeParse({
+        ...peptideForm,
+        inventoryLots: [
+            {
+                ...peptideForm.inventoryLots[0],
+                orderDate: "2026-02-10",
+                deliveryDate: "2026-02-01",
+            },
+        ],
+    });
+    check(
+        "delivery before order is rejected",
+        !badDates.success &&
+        badDates.error.issues.some((i) => i.path.join(".") === "inventoryLots.0.deliveryDate")
+    );
+
+    const badCoa = medicationFormSchema.safeParse({
+        ...peptideForm,
+        inventoryLots: [
+            {
+                ...peptideForm.inventoryLots[0],
+                coaUrlsText: "javascript:alert(1)",
+            },
+        ],
+    });
+    check(
+        "non-http COA links are rejected",
+        !badCoa.success &&
+        badCoa.error.issues.some((i) => i.path.join(".") === "inventoryLots.0.coaUrlsText")
+    );
+
+    const badPrice = medicationFormSchema.safeParse({
+        ...peptideForm,
+        inventoryLots: [
+            {
+                ...peptideForm.inventoryLots[0],
+                pricePerContainer: "-1",
+            },
+        ],
+    });
+    check(
+        "negative lot prices are rejected",
+        !badPrice.success &&
+        badPrice.error.issues.some((i) => i.path.join(".") === "inventoryLots.0.pricePerContainer")
+    );
+
+    // mL-dosed peptides: the lot content is the volume in each container,
+    // while reconstitution still needs the explicit peptide mass.
     const mlForm = medicationToFormValues();
     Object.assign(mlForm, {
         name: "mL peptide",
         type: "peptide",
         unit: "mL",
-        vialCount: "2",
-        containerSize: "",
         hasReconstitution: true,
         vialQuantity: "5",
         vialQuantityUnit: "mg",
         bacWaterAmountMl: "2",
-    } satisfies Partial<typeof mlForm>);
+    });
+    mlForm.inventoryLots = [
+        {
+            ...newInventoryLotFormValues("mL"),
+            id: "ml-lot",
+            vialCount: "2",
+            contentAmount: "2",
+            contentUnit: "mL",
+        },
+    ];
     const mlParsed = medicationFormSchema.safeParse(mlForm);
-    check("mL peptide form parses without a typed per-vial amount", mlParsed.success);
+    check("mL peptide form parses", mlParsed.success);
     const mlInput = toMedicationInput(mlParsed.success ? mlParsed.data : mlForm);
     check(
-        "mL peptide sizes vials from BAC water",
-        mlInput.inventory.containerSize === 2 &&
+        "mL peptide lot stores volume per container",
+        mlInput.inventory.lots[0].contentAmount === 2 &&
+        mlInput.inventory.lots[0].contentUnit === "mL" &&
         mlInput.reconstitution?.vialQuantity === 5 &&
         mlInput.reconstitution?.vialQuantityUnit === "mg"
     );
     const mlCreated = await createMedication(mlInput);
     check(
-        "mL peptide stock derives from vials × BAC water",
-        mlCreated.inventory.currentQuantity === 4,
-        `got ${mlCreated.inventory.currentQuantity}`
+        "mL peptide stock derives from containers × volume",
+        inventoryQuantity(mlCreated) === 4,
+        `got ${inventoryQuantity(mlCreated)}`
     );
     await deleteMedication(mlCreated.id);
 
-    const missingMlMass = medicationFormSchema.safeParse({...mlForm, vialQuantity: ""});
-    check(
-        "mL reconstitution still requires the vial mass",
-        !missingMlMass.success &&
-        missingMlMass.error.issues.some((i) => i.path[0] === "vialQuantity")
-    );
-
-    // Legacy rows (no container size) prefill a per-vial amount that keeps
-    // the stored total intact.
+    // Edit prefill preserves every lot field.
     const prefilled = medicationToFormValues({
         id: "prefill-1",
         name: "Metformin",
         type: "pill",
         unit: "mg",
-        inventory: {currentQuantity: 60, vialCount: 1},
+        inventory: {
+            lots: [
+                {
+                    id: "prefill-lot",
+                    vialCount: 1,
+                    contentAmount: 60,
+                    contentUnit: "mg",
+                    vendor: "Pharmacy",
+                    pricePerContainer: 18.75,
+                },
+            ],
+        },
         createdAt: now,
         updatedAt: now,
     });
     check(
-        "edit prefill sizes per-vial from stored stock",
-        prefilled.containerSize === "60",
-        `got ${prefilled.containerSize}`
+        "edit prefill restores lot rows",
+        prefilled.inventoryLots.length === 1 &&
+        prefilled.inventoryLots[0].id === "prefill-lot" &&
+        prefilled.inventoryLots[0].vialCount === "1" &&
+        prefilled.inventoryLots[0].contentAmount === "60" &&
+        prefilled.inventoryLots[0].contentUnit === "mg" &&
+        prefilled.inventoryLots[0].vendor === "Pharmacy" &&
+        prefilled.inventoryLots[0].pricePerContainer === "18.75",
+        JSON.stringify(prefilled.inventoryLots)
     );
 
     const badNumbers = medicationFormSchema.safeParse({
         ...peptideForm,
-        containerSize: "-1",
-        vialCount: "1.5",
         halfLifeHours: "abc",
+        inventoryLots: [
+            {
+                ...peptideForm.inventoryLots[0],
+                vialCount: "1.5",
+                contentAmount: "-1",
+            },
+        ],
     });
     check(
         "numeric rules produce field errors",
         !badNumbers.success &&
-        badNumbers.error.issues.some((i) => i.path[0] === "containerSize") &&
-        badNumbers.error.issues.some((i) => i.path[0] === "vialCount") &&
+        badNumbers.error.issues.some((i) => i.path.join(".") === "inventoryLots.0.contentAmount") &&
+        badNumbers.error.issues.some((i) => i.path.join(".") === "inventoryLots.0.vialCount") &&
         badNumbers.error.issues.some((i) => i.path[0] === "halfLifeHours")
     );
 
@@ -419,9 +727,9 @@ async function main() {
     const fromForm = await createMedication(peptideInput);
     check(
         "service accepts form-converted input",
-        fromForm.reconstitution?.vialQuantity === 5000 &&
-        fromForm.reconstitution?.vialQuantityUnit === "mcg" &&
-        fromForm.inventory.currentQuantity === 5000
+        fromForm.reconstitution?.vialQuantity === 5 &&
+        fromForm.reconstitution?.vialQuantityUnit === "mg" &&
+        inventoryQuantity(fromForm) === 5000
     );
     await deleteMedication(fromForm.id);
 

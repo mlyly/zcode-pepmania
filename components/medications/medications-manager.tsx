@@ -14,7 +14,7 @@ import {Skeleton} from "@/components/ui/skeleton";
 import {ensureDatabase, type Medication, type MedicationType, type Schedule} from "@/lib/db";
 import {storageAwareMessage} from "@/lib/db/quota";
 import {MEDICATION_TYPE_META, MEDICATION_TYPES} from "@/lib/medications/constants";
-import {inventoryStatus} from "@/lib/medications/derived";
+import {inventoryQuantity, inventoryStatus} from "@/lib/medications/derived";
 import {
     adjustInventory,
     countLinkedRecords,
@@ -137,7 +137,7 @@ export function MedicationsManager() {
                     (a, b) =>
                         STATUS_SEVERITY[inventoryStatus(a)] -
                         STATUS_SEVERITY[inventoryStatus(b)] ||
-                        a.inventory.currentQuantity - b.inventory.currentQuantity ||
+                        inventoryQuantity(a) - inventoryQuantity(b) ||
                         a.name.localeCompare(b.name)
                 );
                 break;
@@ -239,14 +239,10 @@ export function MedicationsManager() {
     }, [deleteTarget, reportError]);
 
     const handleAdjust = React.useCallback(
-        async (medication: Medication, quantityDelta: number, vialDelta: number) => {
+        async (medication: Medication, vialDelta: number) => {
             setBusyId(medication.id);
             try {
-                const updated = await adjustInventory(
-                    medication.id,
-                    quantityDelta,
-                    vialDelta
-                );
+                const updated = await adjustInventory(medication.id, vialDelta);
                 setMedications((previous) =>
                     previous.map((m) => (m.id === updated.id ? updated : m))
                 );
@@ -396,8 +392,8 @@ export function MedicationsManager() {
                             schedules={schedules}
                             onEdit={openEdit}
                             onDelete={(med) => void requestDelete(med)}
-                            onAdjust={(med, quantityDelta, vialDelta) =>
-                                void handleAdjust(med, quantityDelta, vialDelta)
+                            onAdjust={(med, vialDelta) =>
+                                void handleAdjust(med, vialDelta)
                             }
                             adjusting={busyId === medication.id}
                         />

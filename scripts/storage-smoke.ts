@@ -53,7 +53,10 @@ async function main() {
             vialQuantityUnit: "mg",
             bacWaterAmountMl: 2,
         },
-        inventory: {currentQuantity: 5, vialCount: 1, lowStockThreshold: 1},
+        inventory: {
+            lots: [{id: "lot-1", vialCount: 1, contentAmount: 5, contentUnit: "mcg"}],
+            lowStockThreshold: 1,
+        },
         halfLifeHours: 4,
         createdAt: now,
         updatedAt: now,

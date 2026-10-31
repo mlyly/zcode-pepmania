@@ -777,8 +777,8 @@ async function main() {
 
     const migrated = await runMigrations();
     check(
-        "runMigrations reports v2 → v5 (applies v3 + v4 + additive v5)",
-        migrated.from === 2 && migrated.to === 5 && migrated.applied.join() === "3,4,5",
+        "runMigrations reports v2 → v7 (applies v3 + v4 + v5 + v6 + v7)",
+        migrated.from === 2 && migrated.to === 7 && migrated.applied.join() === "3,4,5,6,7",
         `got ${migrated.from} → ${migrated.to} (${migrated.applied.join()})`
     );
 

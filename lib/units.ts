@@ -46,12 +46,13 @@ export function mgToMass(amountMg: number, unit: MassUnit): ConvertedAmount {
 }
 
 export function isMassUnit(unit: DoseUnit): unit is MassUnit {
-    return unit !== "mL";
+    return unit === "mg" || unit === "mcg" || unit === "IU";
 }
 
 /**
  * Converts between dose units. Returns `null` when no exact conversion
- * exists (any path through `mL` requires a concentration).
+ * exists: volumes require a reconstitution concentration and counts only
+ * convert to counts.
  */
 export function convertUnit(
     amount: number,
@@ -60,6 +61,7 @@ export function convertUnit(
 ): ConvertedAmount | null {
     if (from === to) return {value: amount, iuFallback: false};
     if (from === "mL" || to === "mL") return null;
+    if (from === "pcs" || to === "pcs") return null;
     const inMg = massToMg(amount, from);
     const out = mgToMass(inMg.value, to);
     return {value: out.value, iuFallback: inMg.iuFallback || out.iuFallback};
@@ -101,4 +103,14 @@ export function formatNumber(value: number): string {
 /** Formats an amount with its unit, e.g. `2,500 mcg` or `0.1 mL`. */
 export function formatAmount(value: number, unit: string): string {
     return `${formatNumber(value)} ${unit}`;
+}
+
+const priceFormatter = new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: "USD",
+});
+
+/** Formats a USD price, e.g. `$12.50`. */
+export function formatPrice(value: number): string {
+    return priceFormatter.format(value);
 }

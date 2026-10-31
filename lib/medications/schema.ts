@@ -7,19 +7,124 @@
  * single `superRefine` pass so messages stay human-readable, and
  * `toMedicationInput` turns validated strings into the canonical input.
  *
- * Stock is never typed in directly: callers provide the number of containers
- * and the amount per container, and the service derives
- * `inventory.currentQuantity = vialCount × containerSize`.
+ * Inventory is a list of lots. Each lot stores the number of containers and
+ * the content of one container (e.g. `3 × 5 mg`), plus order/delivery dates,
+ * vendor, COA links and notes. Totals are never typed in directly — the
+ * derived helpers sum the lots when the UI needs a stock figure.
  */
 import {z} from "zod";
 
-import type {Medication} from "@/lib/db/types";
-import {convertUnit, isMassUnit, parseDecimalInput, roundAmount} from "@/lib/units";
+import type {DoseUnit, Medication} from "@/lib/db/types";
+import {parseDecimalInput} from "@/lib/units";
 import {DOSE_UNITS, MASS_UNITS, MEDICATION_TYPES} from "./constants";
+
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+
+const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+/** True for a real local calendar date (rejects 2026-02-30). */
+function isRealDate(value: string): boolean {
+    const match = DATE_ONLY_PATTERN.exec(value.trim());
+    if (!match) return false;
+    const [year, month, day] = value.trim().split("-").map(Number);
+    const date = new Date(year, month - 1, day);
+    return (
+        date.getFullYear() === year &&
+        date.getMonth() === month - 1 &&
+        date.getDate() === day
+    );
+}
+
+const optionalDateSchema = z
+    .string()
+    .trim()
+    .refine((value) => value === "" || isRealDate(value), "Use a real date (YYYY-MM-DD)")
+    .optional();
+
+/**
+ * Normalizes a pasted COA link. Bare hostnames get `https://`; only http(s)
+ * URLs are accepted (never `javascript:`, `data:` etc.).
+ */
+export function normalizeCoaUrl(raw: string): string | null {
+    const trimmed = raw.trim();
+    if (trimmed === "") return null;
+    const candidate = /^[a-z][a-z0-9+.-]*:/i.test(trimmed)
+        ? trimmed
+        : `https://${trimmed}`;
+    try {
+        const url = new URL(candidate);
+        if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+        if (!url.hostname) return null;
+        return url.toString();
+    } catch {
+        return null;
+    }
+}
+
+/** Splits a textarea of COA links (one per line or comma-separated). */
+export function parseCoaUrls(raw: string): string[] {
+    const seen = new Set<string>();
+    const urls: string[] = [];
+    for (const token of raw.split(/[\n,]+/)) {
+        const normalized = normalizeCoaUrl(token);
+        if (!normalized || seen.has(normalized)) continue;
+        seen.add(normalized);
+        urls.push(normalized);
+    }
+    return urls;
+}
+
+function isValidHttpUrl(value: string): boolean {
+    try {
+        const url = new URL(value);
+        return (
+            (url.protocol === "http:" || url.protocol === "https:") &&
+            url.hostname.length > 0
+        );
+    } catch {
+        return false;
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Canonical (service-level) schema
 // ---------------------------------------------------------------------------
+
+export const inventoryLotInputSchema = z.object({
+    /** Preserved when editing; omitted for new rows (the service assigns one). */
+    id: z.string().trim().min(1).optional(),
+    vialCount: z
+        .number()
+        .int("Containers must be a whole number")
+        .min(0, "Containers can't be negative"),
+    /** Amount in one container (e.g. 5 mg, 60 pcs). */
+    contentAmount: z.number().positive("Container content must be greater than zero"),
+    contentUnit: z.enum(DOSE_UNITS),
+    orderDate: optionalDateSchema,
+    deliveryDate: optionalDateSchema,
+    vendor: z.string().trim().max(200, "Vendor is limited to 200 characters").optional(),
+    /** Price paid per container/vial, in USD. */
+    pricePerContainer: z
+        .number()
+        .min(0, "Price can't be negative")
+        .max(1000000, "Price looks too large")
+        .optional(),
+    coaUrls: z
+        .array(
+            z
+                .string()
+                .trim()
+                .max(2048, "COA links are limited to 2048 characters")
+                .refine(isValidHttpUrl, "Use an http(s) link")
+        )
+        .max(20, "Keep it to 20 COA links")
+        .optional(),
+    notes: z.string().trim().max(1000, "Lot notes are limited to 1000 characters").optional(),
+});
+
+export type InventoryLotInput = z.infer<typeof inventoryLotInputSchema>;
 
 export const medicationInputSchema = z.object({
     name: z
@@ -35,14 +140,7 @@ export const medicationInputSchema = z.object({
         .max(100000, "Half-life looks too large")
         .optional(),
     inventory: z.object({
-        vialCount: z
-            .number()
-            .int("Containers must be a whole number")
-            .min(0, "Containers can't be negative"),
-        /** Amount per container — stock is derived from count × this. */
-        containerSize: z
-            .number()
-            .positive("Container size must be greater than zero"),
+        lots: z.array(inventoryLotInputSchema).max(50, "Keep it to 50 inventory lots"),
         lowStockThreshold: z
             .number()
             .min(0, "Threshold can't be negative")
@@ -70,6 +168,21 @@ export type MedicationInput = z.infer<typeof medicationInputSchema>;
 // Form (dialog) schema
 // ---------------------------------------------------------------------------
 
+export const inventoryLotFormSchema = z.object({
+    id: z.string(),
+    vialCount: z.string(),
+    contentAmount: z.string(),
+    contentUnit: z.enum(DOSE_UNITS),
+    orderDate: z.string(),
+    deliveryDate: z.string(),
+    vendor: z.string().max(200, "Vendor is limited to 200 characters"),
+    pricePerContainer: z.string(),
+    coaUrlsText: z.string().max(5000, "COA links are too long"),
+    notes: z.string().max(1000, "Lot notes are limited to 1000 characters"),
+});
+
+export type InventoryLotFormValues = z.infer<typeof inventoryLotFormSchema>;
+
 export const medicationFormSchema = z
     .object({
         name: z
@@ -81,8 +194,7 @@ export const medicationFormSchema = z
         unit: z.enum(DOSE_UNITS),
         // Optional numeric inputs — "" means "not set"; validated in superRefine.
         halfLifeHours: z.string(),
-        vialCount: z.string(),
-        containerSize: z.string(),
+        inventoryLots: z.array(inventoryLotFormSchema).max(50, "Keep it to 50 inventory lots"),
         lowStockThreshold: z.string(),
         hasReconstitution: z.boolean(),
         vialQuantity: z.string(),
@@ -91,45 +203,77 @@ export const medicationFormSchema = z
         notes: z.string().max(2000, "Notes are limited to 2000 characters"),
     })
     .superRefine((values, ctx) => {
-        const reconstituted = values.type === "peptide" && values.hasReconstitution;
-        // mL-dosed peptides size each vial by its BAC-water volume, so the
-        // per-container amount is derived and the vial mass is typed below.
-        const vialSizedByWater = reconstituted && values.unit === "mL";
-        checkNumeric(ctx, "vialCount", values.vialCount, {
-            label: "Containers",
-            required: true,
-            integer: true,
-            min: 0,
-        });
-        if (!vialSizedByWater) {
-            checkNumeric(ctx, "containerSize", values.containerSize, {
-                label: "Container size",
+        values.inventoryLots.forEach((lot, index) => {
+            const base = ["inventoryLots", index] as const;
+            checkNumeric(ctx, [...base, "vialCount"], lot.vialCount, {
+                label: `Lot ${index + 1} containers`,
+                required: true,
+                integer: true,
+                min: 0,
+            });
+            checkNumeric(ctx, [...base, "contentAmount"], lot.contentAmount, {
+                label: `Lot ${index + 1} container content`,
                 required: true,
                 positive: true,
             });
-        }
-        checkNumeric(ctx, "lowStockThreshold", values.lowStockThreshold, {
+            checkNumeric(ctx, [...base, "pricePerContainer"], lot.pricePerContainer, {
+                label: `Lot ${index + 1} price per container`,
+                min: 0,
+                max: 1000000,
+            });
+            checkDate(ctx, [...base, "orderDate"], lot.orderDate, `Lot ${index + 1} order date`);
+            checkDate(
+                ctx,
+                [...base, "deliveryDate"],
+                lot.deliveryDate,
+                `Lot ${index + 1} delivery date`
+            );
+
+            if (
+                isRealDate(lot.orderDate.trim()) &&
+                isRealDate(lot.deliveryDate.trim()) &&
+                lot.deliveryDate.trim() < lot.orderDate.trim()
+            ) {
+                ctx.addIssue({
+                    code: "custom",
+                    path: [...base, "deliveryDate"],
+                    message: "Delivery can't be before the order date",
+                });
+            }
+
+            for (const token of lot.coaUrlsText.split(/[\n,]+/)) {
+                if (token.trim() === "") continue;
+                if (!normalizeCoaUrl(token)) {
+                    ctx.addIssue({
+                        code: "custom",
+                        path: [...base, "coaUrlsText"],
+                        message: `"${token.trim()}" is not a valid http(s) link`,
+                    });
+                    break;
+                }
+            }
+        });
+
+        checkNumeric(ctx, ["lowStockThreshold"], values.lowStockThreshold, {
             label: "Low-stock threshold",
             min: 0,
         });
-        checkNumeric(ctx, "halfLifeHours", values.halfLifeHours, {
+        checkNumeric(ctx, ["halfLifeHours"], values.halfLifeHours, {
             label: "Half-life",
             positive: true,
             max: 100000,
         });
-        if (reconstituted) {
-            checkNumeric(ctx, "bacWaterAmountMl", values.bacWaterAmountMl, {
+        if (values.type === "peptide" && values.hasReconstitution) {
+            checkNumeric(ctx, ["bacWaterAmountMl"], values.bacWaterAmountMl, {
                 label: "BAC water",
                 required: true,
                 positive: true,
             });
-            if (vialSizedByWater) {
-                checkNumeric(ctx, "vialQuantity", values.vialQuantity, {
-                    label: "Vial quantity",
-                    required: true,
-                    positive: true,
-                });
-            }
+            checkNumeric(ctx, ["vialQuantity"], values.vialQuantity, {
+                label: "Peptide per vial",
+                required: true,
+                positive: true,
+            });
         }
     });
 
@@ -146,19 +290,23 @@ interface NumericRules {
 }
 
 type RefineContext = {
-    addIssue: (issue: { code: "custom"; path: (string | number)[]; message: string }) => void;
+    addIssue: (issue: {
+        code: "custom";
+        path: (string | number)[];
+        message: string;
+    }) => void;
 };
 
 function checkNumeric(
     ctx: RefineContext,
-    path: string,
+    path: (string | number)[],
     raw: string,
     rules: NumericRules
 ): void {
     const trimmed = raw.trim();
     if (trimmed === "") {
         if (rules.required) {
-            ctx.addIssue({code: "custom", path: [path], message: `${rules.label} is required`});
+            ctx.addIssue({code: "custom", path, message: `${rules.label} is required`});
         }
         return;
     }
@@ -166,7 +314,7 @@ function checkNumeric(
     if (value === undefined) {
         ctx.addIssue({
             code: "custom",
-            path: [path],
+            path,
             message: `${rules.label} must be a number`,
         });
         return;
@@ -174,7 +322,7 @@ function checkNumeric(
     if (rules.positive && value <= 0) {
         ctx.addIssue({
             code: "custom",
-            path: [path],
+            path,
             message: `${rules.label} must be greater than zero`,
         });
         return;
@@ -182,7 +330,7 @@ function checkNumeric(
     if (rules.min !== undefined && value < rules.min) {
         ctx.addIssue({
             code: "custom",
-            path: [path],
+            path,
             message: `${rules.label} can't be below ${rules.min}`,
         });
         return;
@@ -190,7 +338,7 @@ function checkNumeric(
     if (rules.max !== undefined && value > rules.max) {
         ctx.addIssue({
             code: "custom",
-            path: [path],
+            path,
             message: `${rules.label} looks too large`,
         });
         return;
@@ -198,10 +346,21 @@ function checkNumeric(
     if (rules.integer && !Number.isInteger(value)) {
         ctx.addIssue({
             code: "custom",
-            path: [path],
+            path,
             message: `${rules.label} must be a whole number`,
         });
     }
+}
+
+function checkDate(
+    ctx: RefineContext,
+    path: (string | number)[],
+    raw: string,
+    label: string
+): void {
+    const trimmed = raw.trim();
+    if (trimmed === "" || isRealDate(trimmed)) return;
+    ctx.addIssue({code: "custom", path, message: `${label} must be a real date`});
 }
 
 // ---------------------------------------------------------------------------
@@ -213,30 +372,22 @@ function parseFormNumber(raw: string): number | undefined {
     return parseDecimalInput(raw);
 }
 
-/**
- * Best-effort prefill for the per-container amount on rows saved before the
- * stock field was removed: prefer the stored size, else a value that keeps
- * the stored total intact, else the reconstitution vial mass converted into
- * the medication's unit.
- */
-function prefillContainerSize(medication: Medication): string {
-    const {currentQuantity, vialCount, containerSize} = medication.inventory;
-    if (containerSize !== undefined && containerSize > 0) {
-        return containerSize.toString();
-    }
-    if (vialCount > 0 && currentQuantity > 0) {
-        return roundAmount(currentQuantity / vialCount).toString();
-    }
-    const recon = medication.reconstitution;
-    if (recon && isMassUnit(medication.unit)) {
-        const converted = convertUnit(
-            recon.vialQuantity,
-            recon.vialQuantityUnit,
-            medication.unit
-        );
-        if (converted && converted.value > 0) return roundAmount(converted.value).toString();
-    }
-    return "";
+/** Creates a blank lot row for the dialog. */
+export function newInventoryLotFormValues(
+    contentUnit: DoseUnit = "mg"
+): InventoryLotFormValues {
+    return {
+        id: crypto.randomUUID(),
+        vialCount: "0",
+        contentAmount: "",
+        contentUnit,
+        orderDate: "",
+        deliveryDate: "",
+        vendor: "",
+        pricePerContainer: "",
+        coaUrlsText: "",
+        notes: "",
+    };
 }
 
 /** Builds dialog defaults; pass a medication to prefill for editing. */
@@ -247,8 +398,7 @@ export function medicationToFormValues(medication?: Medication): MedicationFormV
             type: "peptide",
             unit: "mg",
             halfLifeHours: "",
-            vialCount: "0",
-            containerSize: "",
+            inventoryLots: [newInventoryLotFormValues("mg")],
             lowStockThreshold: "",
             hasReconstitution: false,
             vialQuantity: "",
@@ -262,8 +412,18 @@ export function medicationToFormValues(medication?: Medication): MedicationFormV
         type: medication.type,
         unit: medication.unit,
         halfLifeHours: medication.halfLifeHours?.toString() ?? "",
-        vialCount: medication.inventory.vialCount.toString(),
-        containerSize: prefillContainerSize(medication),
+        inventoryLots: medication.inventory.lots.map((lot) => ({
+            id: lot.id,
+            vialCount: lot.vialCount.toString(),
+            contentAmount: lot.contentAmount.toString(),
+            contentUnit: lot.contentUnit,
+            orderDate: lot.orderDate ?? "",
+            deliveryDate: lot.deliveryDate ?? "",
+            vendor: lot.vendor ?? "",
+            pricePerContainer: lot.pricePerContainer?.toString() ?? "",
+            coaUrlsText: lot.coaUrls?.join("\n") ?? "",
+            notes: lot.notes ?? "",
+        })),
         lowStockThreshold: medication.inventory.lowStockThreshold?.toString() ?? "",
         hasReconstitution: medication.type === "peptide" && !!medication.reconstitution,
         vialQuantity: medication.reconstitution?.vialQuantity.toString() ?? "",
@@ -283,8 +443,21 @@ export function toMedicationInput(values: MedicationFormValues): MedicationInput
         unit: values.unit,
         halfLifeHours: parseFormNumber(values.halfLifeHours),
         inventory: {
-            vialCount: Math.trunc(parseFormNumber(values.vialCount) ?? 0),
-            containerSize: parseFormNumber(values.containerSize) ?? Number.NaN,
+            lots: values.inventoryLots.map((lot) => {
+                const coaUrls = parseCoaUrls(lot.coaUrlsText);
+                return {
+                    id: lot.id.trim() || undefined,
+                    vialCount: Math.trunc(parseFormNumber(lot.vialCount) ?? 0),
+                    contentAmount: parseFormNumber(lot.contentAmount) ?? Number.NaN,
+                    contentUnit: lot.contentUnit,
+                    orderDate: lot.orderDate.trim() || undefined,
+                    deliveryDate: lot.deliveryDate.trim() || undefined,
+                    vendor: lot.vendor.trim() || undefined,
+                    pricePerContainer: parseFormNumber(lot.pricePerContainer),
+                    coaUrls: coaUrls.length > 0 ? coaUrls : undefined,
+                    notes: lot.notes.trim() || undefined,
+                };
+            }),
             lowStockThreshold: parseFormNumber(values.lowStockThreshold),
         },
         notes: values.notes.trim() || undefined,
@@ -292,26 +465,11 @@ export function toMedicationInput(values: MedicationFormValues): MedicationInput
         reconstitution: undefined,
     };
     if (values.type === "peptide" && values.hasReconstitution) {
-        const bacWaterAmountMl = parseFormNumber(values.bacWaterAmountMl) ?? Number.NaN;
-        if (values.unit === "mL") {
-            // Volume-dosed peptide: the vial mass is typed in the dialog's
-            // reconstitution fields, and each vial's stock volume is the BAC
-            // water mixed into it.
-            input.reconstitution = {
-                vialQuantity: parseFormNumber(values.vialQuantity) ?? Number.NaN,
-                vialQuantityUnit: values.vialQuantityUnit,
-                bacWaterAmountMl,
-            };
-            input.inventory.containerSize = bacWaterAmountMl;
-        } else {
-            // Mass-dosed peptide: the per-container inventory amount IS the
-            // peptide mass per vial — no second field to retype.
-            input.reconstitution = {
-                vialQuantity: parseFormNumber(values.containerSize) ?? Number.NaN,
-                vialQuantityUnit: values.unit,
-                bacWaterAmountMl,
-            };
-        }
+        input.reconstitution = {
+            vialQuantity: parseFormNumber(values.vialQuantity) ?? Number.NaN,
+            vialQuantityUnit: values.vialQuantityUnit,
+            bacWaterAmountMl: parseFormNumber(values.bacWaterAmountMl) ?? Number.NaN,
+        };
     }
     return input;
 }

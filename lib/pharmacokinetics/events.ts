@@ -64,6 +64,8 @@ export function doseAmountToMg(
             iuFallback: concentration.iuFallback,
         };
     }
+    // Counts (pcs) have no mass, so they can't feed the concentration model.
+    if (unit === "pcs") return null;
 
     const converted = massToMg(amount, unit);
     return {amountMg: converted.value, iuFallback: converted.iuFallback};

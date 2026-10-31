@@ -15,8 +15,22 @@ export const MEDICATION_TYPES = [
     "other",
 ] as const;
 
-export const DOSE_UNITS = ["mg", "mcg", "IU", "mL"] as const;
+export const DOSE_UNITS = ["mg", "mcg", "IU", "mL", "pcs"] as const;
 export const MASS_UNITS = ["mg", "mcg", "IU"] as const;
+/** Units selectable for an inventory lot's per-container content. */
+export const INVENTORY_CONTENT_UNITS = DOSE_UNITS;
+
+/** Human label for a dose unit in select menus. */
+export function doseUnitLabel(unit: string): string {
+    switch (unit) {
+        case "mL":
+            return "mL (volume)";
+        case "pcs":
+            return "pcs (count)";
+        default:
+            return unit;
+    }
+}
 
 export interface MedicationTypeMeta {
     value: MedicationType;

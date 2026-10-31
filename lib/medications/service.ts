@@ -7,8 +7,7 @@
  * The caller is responsible for having run `ensureDatabase()` first (the
  * medications page gates rendering on it, mirroring the settings page).
  */
-import {db, type Medication, type Schedule} from "@/lib/db";
-import {roundAmount} from "@/lib/units";
+import {db, type InventoryLot, type Medication, type Schedule} from "@/lib/db";
 import {type MedicationInput, medicationInputSchema} from "./schema";
 
 function newId(): string {
@@ -20,14 +19,34 @@ function nowIso(): string {
 }
 
 /**
- * Stock on hand is always derived: containers × amount per container
- * (rounded to trim float noise). Validated upstream by the zod schema.
+ * Assigns ids to new lot rows and trims PUT-cleared optional fields into
+ * omitted keys. Validated upstream by the zod schema.
  */
-function derivedStock(inventory: {
-    vialCount: number;
-    containerSize: number;
-}): number {
-    return roundAmount(inventory.vialCount * inventory.containerSize);
+function normalizeLots(lots: MedicationInput["inventory"]["lots"]): InventoryLot[] {
+    return lots.map((lot) => ({
+        id: lot.id ?? newId(),
+        vialCount: lot.vialCount,
+        contentAmount: lot.contentAmount,
+        contentUnit: lot.contentUnit,
+        orderDate: lot.orderDate,
+        deliveryDate: lot.deliveryDate,
+        vendor: lot.vendor,
+        pricePerContainer: lot.pricePerContainer,
+        coaUrls: lot.coaUrls,
+        notes: lot.notes,
+    }));
+}
+
+function inventoryFromInput(input: MedicationInput): Medication["inventory"] {
+    return {
+        lots: normalizeLots(input.inventory.lots),
+        lowStockThreshold: input.inventory.lowStockThreshold,
+    };
+}
+
+/** Sort key for FIFO consumption / newest-first additions. */
+function lotDateKey(lot: InventoryLot): string {
+    return lot.deliveryDate ?? lot.orderDate ?? "";
 }
 
 export async function listMedications(): Promise<Medication[]> {
@@ -51,12 +70,7 @@ export async function createMedication(input: MedicationInput): Promise<Medicati
         type: parsed.type,
         unit: parsed.unit,
         reconstitution: parsed.reconstitution,
-        inventory: {
-            currentQuantity: derivedStock(parsed.inventory),
-            vialCount: parsed.inventory.vialCount,
-            containerSize: parsed.inventory.containerSize,
-            lowStockThreshold: parsed.inventory.lowStockThreshold,
-        },
+        inventory: inventoryFromInput(parsed),
         halfLifeHours: parsed.halfLifeHours,
         notes: parsed.notes,
         createdAt: timestamp,
@@ -82,12 +96,7 @@ export async function updateMedication(
         type: parsed.type,
         unit: parsed.unit,
         reconstitution: parsed.reconstitution,
-        inventory: {
-            currentQuantity: derivedStock(parsed.inventory),
-            vialCount: parsed.inventory.vialCount,
-            containerSize: parsed.inventory.containerSize,
-            lowStockThreshold: parsed.inventory.lowStockThreshold,
-        },
+        inventory: inventoryFromInput(parsed),
         halfLifeHours: parsed.halfLifeHours,
         notes: parsed.notes,
         createdAt: existing.createdAt,
@@ -127,34 +136,47 @@ export async function deleteMedication(id: string): Promise<LinkedRecordCounts> 
 }
 
 /**
- * Quick inventory adjustment used by the card stepper. Rows with a per-container
- * size always derive stock from the container count (`vials × size`), so
- * `vialDelta` alone moves the total; legacy rows without a size fall back to
- * the plain `quantityDelta`. Counts clamp at zero and floats are rounded to
- * avoid accumulated noise.
+ * Quick inventory adjustment used by the card stepper: moves whole containers
+ * between lots. Consuming removes from the oldest lot first (FIFO); adding
+ * tops up the newest lot. Counts clamp at zero.
  */
 export async function adjustInventory(
     id: string,
-    quantityDelta: number,
-    vialDelta = 0
+    vialDelta: number
 ): Promise<Medication> {
     return db.transaction("rw", db.medications, async () => {
         const existing = await db.medications.get(id);
         if (!existing) throw new Error("Medication not found — it may have been deleted.");
 
-        const {currentQuantity, vialCount, containerSize} = existing.inventory;
-        const nextVialCount = Math.max(0, vialCount + vialDelta);
-        const nextQuantity =
-            containerSize !== undefined
-                ? roundAmount(nextVialCount * containerSize)
-                : roundAmount(Math.max(0, currentQuantity + quantityDelta));
+        const lots = existing.inventory.lots.map((lot) => ({...lot}));
+        if (vialDelta > 0) {
+            if (lots.length === 0) {
+                throw new Error(
+                    "Add an inventory lot in Edit before increasing stock."
+                );
+            }
+            const newest = [...lots].sort((a, b) =>
+                lotDateKey(a) < lotDateKey(b) ? 1 : lotDateKey(a) > lotDateKey(b) ? -1 : 0
+            )[0];
+            newest.vialCount = Math.max(0, Math.trunc(newest.vialCount + vialDelta));
+        } else if (vialDelta < 0) {
+            let remaining = Math.abs(Math.trunc(vialDelta));
+            const oldestFirst = [...lots].sort((a, b) =>
+                lotDateKey(a) < lotDateKey(b) ? -1 : lotDateKey(a) > lotDateKey(b) ? 1 : 0
+            );
+            for (const lot of oldestFirst) {
+                if (remaining <= 0) break;
+                const take = Math.min(Math.max(0, lot.vialCount), remaining);
+                lot.vialCount -= take;
+                remaining -= take;
+            }
+        }
 
         const medication: Medication = {
             ...existing,
             inventory: {
                 ...existing.inventory,
-                currentQuantity: nextQuantity,
-                vialCount: nextVialCount,
+                lots,
             },
             updatedAt: nowIso(),
         };

@@ -87,7 +87,10 @@ const medA: Medication = {
     type: "peptide",
     unit: "mg",
     reconstitution: {vialQuantity: 5, vialQuantityUnit: "mg", bacWaterAmountMl: 2},
-    inventory: {currentQuantity: 10, vialCount: 2, lowStockThreshold: 2},
+    inventory: {
+        lots: [{id: "lot-a", vialCount: 2, contentAmount: 5, contentUnit: "mg"}],
+        lowStockThreshold: 2,
+    },
     halfLifeHours: 168,
     createdAt: NOW_ISO,
     updatedAt: NOW_ISO,
@@ -97,7 +100,9 @@ const medB: Medication = {
     name: "BPC-157",
     type: "peptide",
     unit: "mcg",
-    inventory: {currentQuantity: 500, vialCount: 1},
+    inventory: {
+        lots: [{id: "lot-b", vialCount: 1, contentAmount: 500, contentUnit: "mcg"}],
+    },
     createdAt: NOW_ISO,
     updatedAt: NOW_ISO,
 };
@@ -330,11 +335,11 @@ async function main() {
         !longSite.success && longSite.error.issues.some((i) => i.path[0] === "siteDetail")
     );
 
-    // ============================================================ v3 → v5 migration
+    // ============================================================ v3 → v7 migration
     await ensureDatabase();
     check(
-        "fresh database stamps the current schema v5",
-        LATEST_SCHEMA_VERSION === 5 && (await ensureDatabase()).to === 5
+        "fresh database stamps the current schema v7",
+        LATEST_SCHEMA_VERSION === 7 && (await ensureDatabase()).to === 7
     );
 
     // Simulate a v3-era database: meta says 3, with a pre-v4 dose log
@@ -354,8 +359,8 @@ async function main() {
 
     const migrated = await runMigrations();
     check(
-        "runMigrations reports v3 → v5 (applies v4 + additive v5)",
-        migrated.from === 3 && migrated.to === 5 && migrated.applied.join() === "4,5",
+        "runMigrations reports v3 → v7 (applies v4 + v5 + v6 + v7)",
+        migrated.from === 3 && migrated.to === 7 && migrated.applied.join() === "4,5,6,7",
         `got ${migrated.from} → ${migrated.to} (${migrated.applied.join()})`
     );
     const survived = (await db.doseLogs.get("v3-log"))!;

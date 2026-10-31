@@ -1,18 +1,34 @@
 "use client";
 
 import * as React from "react";
-import {CalendarClock, FlaskConical, Minus, MoreHorizontal, Pencil, Plus, Timer, Trash2,} from "lucide-react";
+import {
+    CalendarClock,
+    ExternalLink,
+    FlaskConical,
+    Minus,
+    MoreHorizontal,
+    Pencil,
+    Plus,
+    Timer,
+    Trash2,
+    TriangleAlert,
+} from "lucide-react";
 
 import type {Medication, Schedule} from "@/lib/db/types";
 import {
     activeSchedulesFor,
     concentrationLabel,
     daysOfStockRemaining,
+    formatStockDuration,
+    inventoryPriceTotals,
     inventoryStatus,
+    inventoryTotals,
+    lotTotalAmount,
+    lotTotalPrice,
     stockRatio,
 } from "@/lib/medications/derived";
 import {medicationTypeMeta} from "@/lib/medications/constants";
-import {formatAmount, formatNumber} from "@/lib/units";
+import {formatAmount, formatNumber, formatPrice} from "@/lib/units";
 import {cn} from "@/lib/utils";
 
 import {Badge} from "@/components/ui/badge";
@@ -28,7 +44,8 @@ export interface MedicationCardProps {
     schedules: Schedule[];
     onEdit: (medication: Medication) => void;
     onDelete: (medication: Medication) => void;
-    onAdjust: (medication: Medication, quantityDelta: number, vialDelta: number) => void;
+    /** Adds/removes whole containers (FIFO removal, newest-lot top-up). */
+    onAdjust: (medication: Medication, vialDelta: number) => void;
     /** Disables quick adjustments while a write is in flight for this row. */
     adjusting?: boolean;
 }
@@ -42,7 +59,9 @@ const STATUS_BAR: Record<"out" | "low" | "ok", string> = {
 const LOW_STOCK_BADGE =
     "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300";
 
-/** Compact medication row: identity, inventory tracker and schedule linkage. */
+const WARNING_TEXT = "text-amber-600 dark:text-amber-400";
+
+/** Compact medication row: identity, lot-based inventory and schedule linkage. */
 export function MedicationCard({
                                    medication,
                                    schedules,
@@ -59,18 +78,15 @@ export function MedicationCard({
     const status = inventoryStatus(medication);
     const ratio = stockRatio(medication);
     const concentration = concentrationLabel(medication);
+    const totals = inventoryTotals(medication);
+    const priceTotals = inventoryPriceTotals(medication);
     const daysLeft = daysOfStockRemaining(medication, schedules);
+    const duration = formatStockDuration(daysLeft);
 
-    const {currentQuantity, vialCount, containerSize, lowStockThreshold} =
-        medication.inventory;
-    const step = containerSize ?? 1;
-    const stepsByContainer = containerSize !== undefined;
-    const canAdd = !adjusting;
-    const canRemove = !adjusting && currentQuantity > 0;
-
-    const adjustLabel = stepsByContainer
-        ? `${formatAmount(step, medication.unit)} per ${meta.containerNoun}`
-        : `1 ${medication.unit}`;
+    const containerPlural = `${meta.containerNoun}s`;
+    const {lots, lowStockThreshold} = medication.inventory;
+    const canAdd = !adjusting && lots.length > 0;
+    const canRemove = !adjusting && totals.vialCount > 0;
 
     return (
         <Card className="gap-3 py-4">
@@ -169,22 +185,16 @@ export function MedicationCard({
                         className={cn("h-1.5 flex-1", STATUS_BAR[status])}
                     />
                     <span className="tabular-nums text-xs font-medium whitespace-nowrap">
-                        {formatAmount(currentQuantity, medication.unit)}
+                        {formatAmount(totals.quantity, medication.unit)}
                     </span>
                     <div className="flex items-center gap-1">
                         <Button
                             variant="outline"
                             size="icon"
                             className="size-7"
-                            onClick={() =>
-                                onAdjust(medication, -step, stepsByContainer ? -1 : 0)
-                            }
+                            onClick={() => onAdjust(medication, -1)}
                             disabled={!canRemove}
-                            aria-label={
-                                stepsByContainer
-                                    ? `Remove one ${meta.containerNoun} (${formatAmount(step, medication.unit)})`
-                                    : `Remove 1 ${medication.unit}`
-                            }
+                            aria-label={`Remove one ${meta.containerNoun}`}
                         >
                             <Minus className="size-3.5" aria-hidden/>
                         </Button>
@@ -192,44 +202,144 @@ export function MedicationCard({
                             variant="outline"
                             size="icon"
                             className="size-7"
-                            onClick={() =>
-                                onAdjust(medication, step, stepsByContainer ? 1 : 0)
-                            }
+                            onClick={() => onAdjust(medication, 1)}
                             disabled={!canAdd}
-                            aria-label={`Add ${adjustLabel}`}
+                            aria-label={`Add one ${meta.containerNoun}`}
                         >
                             <Plus className="size-3.5" aria-hidden/>
                         </Button>
                     </div>
                 </div>
+
                 <div className="text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
                     <span className="tabular-nums">
-                        {vialCount} {vialCount === 1 ? meta.containerNoun : `${meta.containerNoun}s`}
+                        {formatNumber(totals.vialCount)}{" "}
+                        {totals.vialCount === 1 ? meta.containerNoun : containerPlural}
                     </span>
-                    {containerSize !== undefined && (
-                        <span className="tabular-nums">
-                            · {formatAmount(containerSize, medication.unit)} per{" "}
-                            {meta.containerNoun}
-                        </span>
-                    )}
+                    <span className="tabular-nums">
+                        · {totals.lotCount} {totals.lotCount === 1 ? "lot" : "lots"}
+                    </span>
                     {lowStockThreshold !== undefined && (
                         <span className="tabular-nums">
                             · alert ≤ {formatAmount(lowStockThreshold, medication.unit)}
                         </span>
                     )}
-                    {daysLeft !== null && (
+                    {duration !== null && status !== "out" && (
                         <span
                             className={cn(
                                 "tabular-nums",
-                                (status === "low" || status === "out") &&
-                                "text-amber-600 dark:text-amber-400"
+                                status === "low" && WARNING_TEXT
                             )}
                         >
-                            · ≈ {formatNumber(daysLeft)}{" "}
-                            {daysLeft === 1 ? "day" : "days"} of doses
+                            · ≈ {duration} of doses
+                        </span>
+                    )}
+                    {duration === null && active.length > 0 && totals.quantity > 0 && (
+                        <span className={cn("tabular-nums", WARNING_TEXT)}>
+                            · duration unavailable
+                        </span>
+                    )}
+                    {priceTotals.pricedLots > 0 && (
+                        <span className="tabular-nums">
+                            · stock value {formatPrice(priceTotals.totalPrice)}
+                            {priceTotals.unpricedLots > 0 &&
+                                ` (${priceTotals.unpricedLots} unpriced)`}
                         </span>
                     )}
                 </div>
+
+                {totals.unconvertibleLots > 0 && (
+                    <p className={cn("inline-flex items-start gap-1.5 text-xs", WARNING_TEXT)}>
+                        <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden/>
+                        {totals.unconvertibleLots}{" "}
+                        {totals.unconvertibleLots === 1 ? "lot uses" : "lots use"} a content
+                        unit that can’t be expressed in {medication.unit}. They are excluded
+                        from stock and duration.
+                    </p>
+                )}
+
+                {/* Lots */}
+                {lots.length > 0 && (
+                    <div className="flex flex-col gap-1.5">
+                        <p className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
+                            Inventory lots
+                        </p>
+                        <ul className="flex flex-col gap-1.5">
+                            {lots.map((lot) => {
+                                // Defensive: imported payloads bypass the form
+                                // schema, so never turn a stored string into a
+                                // non-http link target.
+                                const coaUrls = (lot.coaUrls ?? []).filter((url) =>
+                                    /^https?:\/\//i.test(url)
+                                );
+                                const lotPrice = lotTotalPrice(lot);
+                                return (
+                                    <li
+                                        key={lot.id}
+                                        className={cn(
+                                            "border-border/60 flex flex-col gap-1 rounded-md border px-2.5 py-1.5 text-xs",
+                                            lot.vialCount === 0 && "opacity-60"
+                                        )}
+                                    >
+                                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                                            <span className="font-medium tabular-nums">
+                                                {formatNumber(lot.vialCount)} ×{" "}
+                                                {formatAmount(lot.contentAmount, lot.contentUnit)}
+                                            </span>
+                                            <span className="text-muted-foreground tabular-nums">
+                                                = {formatAmount(lotTotalAmount(lot), lot.contentUnit)}
+                                            </span>
+                                            {lot.vendor && (
+                                                <span className="text-muted-foreground truncate">
+                                                    · {lot.vendor}
+                                                </span>
+                                            )}
+                                            {lot.orderDate && (
+                                                <span className="text-muted-foreground tabular-nums">
+                                                    · ordered {lot.orderDate}
+                                                </span>
+                                            )}
+                                            {lot.deliveryDate && (
+                                                <span className="text-muted-foreground tabular-nums">
+                                                    · delivered {lot.deliveryDate}
+                                                </span>
+                                            )}
+                                            {lotPrice !== null && (
+                                                <span className="text-muted-foreground tabular-nums">
+                                                    · {formatPrice(lotPrice)}
+                                                    {lot.vialCount > 0 &&
+                                                        ` (${formatPrice(lotPrice / lot.vialCount)}/${meta.containerNoun})`}
+                                                </span>
+                                            )}
+                                        </div>
+                                        {(coaUrls.length > 0 || lot.notes) && (
+                                            <div
+                                                className="text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1">
+                                                {coaUrls.map((url, index) => (
+                                                    <a
+                                                        key={`${lot.id}-coa-${index}`}
+                                                        href={url}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        title={url}
+                                                        className="text-primary inline-flex items-center gap-1 hover:underline"
+                                                    >
+                                                        COA
+                                                        {coaUrls.length > 1 ? ` ${index + 1}` : ""}
+                                                        <ExternalLink className="size-3" aria-hidden/>
+                                                    </a>
+                                                ))}
+                                                {lot.notes && (
+                                                    <span className="line-clamp-1">{lot.notes}</span>
+                                                )}
+                                            </div>
+                                        )}
+                                    </li>
+                                );
+                            })}
+                        </ul>
+                    </div>
+                )}
 
                 {/* Schedule linkage with computed dose volumes */}
                 <ScheduleSection medication={medication} schedules={active}/>

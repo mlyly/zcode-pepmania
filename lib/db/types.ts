@@ -10,7 +10,9 @@
 export type MassUnit = "mg" | "mcg" | "IU";
 /** Volume dose unit (only convertible via a reconstitution concentration). */
 export type VolumeUnit = "mL";
-export type DoseUnit = MassUnit | VolumeUnit;
+/** Count unit — pills, capsules, patches, etc. Only converts to itself. */
+export type CountUnit = "pcs";
+export type DoseUnit = MassUnit | VolumeUnit | CountUnit;
 
 export type MedicationType =
     | "peptide"
@@ -19,6 +21,42 @@ export type MedicationType =
     | "liquid"
     | "supplement"
     | "other";
+
+/**
+ * One purchase / delivery lot of a medication.
+ *
+ * `vialCount` is the number of containers currently on hand for this lot (it
+ * is reduced by quick inventory adjustments). `contentAmount` is how much a
+ * single container holds, expressed in `contentUnit` — e.g. a 5 mg peptide
+ * vial or a 60 pcs bottle of tablets.
+ */
+export interface InventoryLot {
+    id: string;
+    /** Containers/vials/bottles currently on hand in this lot. */
+    vialCount: number;
+    /** Amount of medication in one container, in `contentUnit`. */
+    contentAmount: number;
+    contentUnit: DoseUnit;
+    /** Local calendar date the lot was ordered ("YYYY-MM-DD"). */
+    orderDate?: string;
+    /** Local calendar date the lot was delivered/expected ("YYYY-MM-DD"). */
+    deliveryDate?: string;
+    /** Vendor / supplier free text. */
+    vendor?: string;
+    /** Price paid per container/vial, in USD. */
+    pricePerContainer?: number;
+    /** Certificate-of-analysis links (http/https). */
+    coaUrls?: string[];
+    /** Free-text lot notes (batch, storage, etc.). */
+    notes?: string;
+}
+
+export interface MedicationInventory {
+    /** Every stock lot on hand, oldest-first is the preferred consumption order. */
+    lots: InventoryLot[];
+    /** Low-stock alert threshold, in the medication's dose `unit`. */
+    lowStockThreshold?: number;
+}
 
 export interface Medication {
     id: string;
@@ -34,19 +72,8 @@ export interface Medication {
         bacWaterAmountMl: number;
     };
 
-    inventory: {
-        /**
-         * Remaining amount, expressed in `unit`. Derived on every write as
-         * `vialCount × containerSize` — never typed in directly.
-         */
-        currentQuantity: number;
-        /** Vials / bottles / packs on hand. */
-        vialCount: number;
-        /** Amount per container (unit size), in `unit` — e.g. a 5 mg vial. */
-        containerSize?: number;
-        /** Low-stock alert threshold, in `unit`. */
-        lowStockThreshold?: number;
-    };
+    /** Inventory is a set of lots; totals are derived from them on read. */
+    inventory: MedicationInventory;
 
     halfLifeHours?: number;
     notes?: string;

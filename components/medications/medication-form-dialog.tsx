@@ -1,22 +1,25 @@
 "use client";
 
 import * as React from "react";
-import {useForm, useWatch} from "react-hook-form";
+import {useFieldArray, useForm, useWatch} from "react-hook-form";
 import {zodResolver} from "@hookform/resolvers/zod";
-import {TriangleAlert} from "lucide-react";
+import {Plus, Trash2, TriangleAlert} from "lucide-react";
 
 import type {DoseUnit, MassUnit, Medication, Schedule} from "@/lib/db/types";
 import {
     DOSE_UNITS,
+    doseUnitLabel,
     MASS_UNITS,
     MEDICATION_TYPE_META,
     MEDICATION_TYPES,
     medicationTypeMeta,
 } from "@/lib/medications/constants";
+import {amountInMedicationUnit} from "@/lib/medications/derived";
 import {
     medicationFormSchema,
     type MedicationFormValues,
     medicationToFormValues,
+    newInventoryLotFormValues,
     toMedicationInput,
 } from "@/lib/medications/schema";
 import {createMedication, updateMedication} from "@/lib/medications/service";
@@ -24,10 +27,10 @@ import {
     convertUnit,
     formatAmount,
     formatNumber,
+    formatPrice,
     isMassUnit,
     IU_FALLBACK_WARNING,
     parseDecimalInput,
-    roundAmount,
 } from "@/lib/units";
 
 import {Button} from "@/components/ui/button";
@@ -67,22 +70,10 @@ function stockConversionHint(amount: number, unit: MedicationFormValues["unit"])
     return converted ? `≈ ${formatAmount(converted.value, target)}` : null;
 }
 
-/** Parses a raw container count + per-container amount into a stock total. */
-function computedStockTotal(
-    vialCountRaw: string,
-    perVialRaw: string
-): { vials: number; perVial: number; total: number } | null {
-    const vials = parseDecimalInput(vialCountRaw);
-    const perVial = parseDecimalInput(perVialRaw);
-    if (vials === undefined || vials < 0) return null;
-    if (perVial === undefined || perVial <= 0) return null;
-    return {vials, perVial, total: roundAmount(vials * perVial)};
-}
-
 /**
  * Builds a preview medication from raw reconstitution form strings. The vial
- * mass comes from the inventory per-vial field for mass-dosed peptides, or
- * from the dedicated reconstitution field for mL-dosed ones.
+ * mass is typed explicitly whenever reconstitution is enabled, so mixed
+ * inventory lots can never silently change the concentration.
  */
 function buildPreviewMedication(
     vialMass: string,
@@ -126,67 +117,89 @@ function MedicationForm({medication, schedules, onSaved, onCancel}: MedicationFo
         defaultValues: defaults,
     });
 
+    const {fields, append, remove} = useFieldArray({
+        control: form.control,
+        name: "inventoryLots",
+    });
+
     // Whole-form watch for the conditional sections and live previews. The
     // merged values are plain strings/booleans, so sections re-render per
     // keystroke — trivial for a dialog of this size and compiler-friendly.
-    const watched = useWatch({control: form.control});
-    const type = watched.type ?? defaults.type;
-    const unit = watched.unit ?? defaults.unit;
-    const hasReconstitution = watched.hasReconstitution ?? defaults.hasReconstitution;
-    const vialQuantityUnit = watched.vialQuantityUnit ?? defaults.vialQuantityUnit;
-    const vialCount = watched.vialCount ?? defaults.vialCount;
-    const containerSize = watched.containerSize ?? defaults.containerSize;
-    const vialQuantity = watched.vialQuantity ?? defaults.vialQuantity;
-    const bacWaterAmountMl = watched.bacWaterAmountMl ?? defaults.bacWaterAmountMl;
+    const watchedValues = useWatch({control: form.control});
+    // Merge over the defaults so every field is always a complete row while
+    // the dialog mounts (useWatch can be sparse on the first render).
+    const watched = {
+        ...defaults,
+        ...(watchedValues ?? {}),
+    } as MedicationFormValues;
+    const type = watched.type;
+    const unit = watched.unit;
+    const hasReconstitution = watched.hasReconstitution;
+    const vialQuantityUnit = watched.vialQuantityUnit;
+    const vialQuantity = watched.vialQuantity;
+    const bacWaterAmountMl = watched.bacWaterAmountMl;
+    const inventoryLots = watched.inventoryLots;
 
     const meta = medicationTypeMeta(type);
     const isPeptide = type === "peptide";
     const reconstituted = isPeptide && hasReconstitution;
-    // mL-dosed peptides size each vial by its BAC-water volume; the peptide
-    // mass then needs its own input. Mass-dosed peptides reuse the per-vial
-    // inventory amount as the vial mass — nothing to retype.
-    const vialSizedByWater = reconstituted && unit === "mL";
-
-    // Live stock preview: containers × per-container amount (the BAC-water
-    // volume for mL-dosed reconstituted peptides).
-    const stockTotal = computedStockTotal(
-        vialCount,
-        vialSizedByWater ? bacWaterAmountMl : containerSize
-    );
-    // mg ↔ mcg cross-read for the computed total.
-    const stockConversion = stockTotal
-        ? stockConversionHint(stockTotal.total, unit)
-        : null;
-
-    // Read-only echo of the BAC-water volume that sizes a vial (mL peptides).
-    const bacWaterMl = parseDecimalInput(bacWaterAmountMl);
-    const autoPerVialLabel =
-        bacWaterMl !== undefined && bacWaterMl > 0
-            ? `${formatNumber(bacWaterMl)} mL`
-            : "Set BAC water below";
-
-    // Read-only echo of the per-vial amount feeding the concentration math.
-    const perVialAmount = parseDecimalInput(containerSize);
-    const perVialEcho =
-        perVialAmount !== undefined && perVialAmount > 0
-            ? formatAmount(perVialAmount, unit)
-            : "Set the per-vial amount above";
 
     // Live reconstitution preview built from raw watched values.
-    const vialMassUnit: MassUnit | null = vialSizedByWater
-        ? vialQuantityUnit
-        : isMassUnit(unit)
-            ? unit
+    const previewMedication = reconstituted
+        ? buildPreviewMedication(
+            vialQuantity,
+            vialQuantityUnit,
+            bacWaterAmountMl,
+            unit
+        )
+        : null;
+
+    // Aggregate stock preview: sum every lot in the medication's unit. Lots
+    // whose unit can't be expressed there are flagged instead of guessed.
+    const stockPreview = inventoryLots.reduce(
+        (preview, lot) => {
+            const vials = parseDecimalInput(lot.vialCount) ?? 0;
+            const content = parseDecimalInput(lot.contentAmount) ?? 0;
+            const price = parseDecimalInput(lot.pricePerContainer);
+            if (vials < 0 || content <= 0) return preview;
+            const raw = vials * content;
+            preview.vials += vials;
+            preview.lots += content > 0 ? 1 : 0;
+            if (price !== undefined && price >= 0) {
+                preview.price += vials * price;
+                preview.pricedLots += 1;
+            }
+            const converted = amountInMedicationUnit(
+                raw,
+                lot.contentUnit,
+                previewMedication ?? {unit}
+            );
+            if (converted) preview.quantity += converted.value;
+            else if (raw > 0) preview.unconvertible += 1;
+            return preview;
+        },
+        {quantity: 0, vials: 0, lots: 0, unconvertible: 0, price: 0, pricedLots: 0}
+    );
+    const stockConversion =
+        stockPreview.quantity > 0
+            ? stockConversionHint(stockPreview.quantity, unit)
             : null;
-    const previewMedication =
-        reconstituted && vialMassUnit
-            ? buildPreviewMedication(
-                vialSizedByWater ? vialQuantity : containerSize,
-                vialMassUnit,
-                bacWaterAmountMl,
-                unit
-            )
-            : null;
+
+    const handleReconstitutionToggle = (
+        checked: boolean,
+        onChange: (value: boolean) => void
+    ) => {
+        onChange(checked);
+        if (!checked || vialQuantity.trim() !== "") return;
+        // Helpful default: copy the first mass-based lot's content.
+        const first = inventoryLots[0];
+        if (!first) return;
+        const amount = parseDecimalInput(first.contentAmount);
+        if (amount === undefined || amount <= 0) return;
+        if (!isMassUnit(first.contentUnit)) return;
+        form.setValue("vialQuantity", first.contentAmount);
+        form.setValue("vialQuantityUnit", first.contentUnit);
+    };
 
     const activeSchedules = React.useMemo(
         () => schedules.filter((s) => s.medicationId === medication?.id && s.active),
@@ -291,7 +304,7 @@ function MedicationForm({medication, schedules, onSaved, onCancel}: MedicationFo
                                     <SelectContent>
                                         {DOSE_UNITS.map((value) => (
                                             <SelectItem key={value} value={value}>
-                                                {value === "mL" ? "mL (volume)" : value}
+                                                {doseUnitLabel(value)}
                                             </SelectItem>
                                         ))}
                                     </SelectContent>
@@ -345,115 +358,332 @@ function MedicationForm({medication, schedules, onSaved, onCancel}: MedicationFo
 
                 <Separator/>
 
-                {/* Inventory — stock is derived from containers × per-container */}
-                <fieldset className="flex flex-col gap-4">
-                    <legend className="text-sm font-medium">Inventory</legend>
-                    <div className="grid gap-4 sm:grid-cols-2">
-                        <FormField
-                            control={form.control}
-                            name="vialCount"
-                            render={({field}) => (
-                                <FormItem>
-                                    <FormLabel>{containerLabel}</FormLabel>
-                                    <div className="relative">
-                                        <FormControl>
-                                            <Input
-                                                inputMode="numeric"
-                                                placeholder="0"
-                                                className="pr-14"
-                                                {...field}
-                                            />
-                                        </FormControl>
-                                        <Suffix
-                                            unit={`${meta.containerNoun}s`}
-                                        />
-                                    </div>
-                                    <FormMessage/>
-                                </FormItem>
-                            )}
-                        />
+                {/* Inventory — one card per purchase/delivery lot */}
+                <fieldset className="flex flex-col gap-3">
+                    <legend className="text-sm font-medium">Inventory lots</legend>
+                    <p className="text-muted-foreground text-xs">
+                        Add each purchase or delivery separately. Stock is the sum of{" "}
+                        {containerLabel.toLowerCase()} × content per{" "}
+                        {meta.containerNoun}.
+                    </p>
 
-                        {vialSizedByWater ? (
-                            <div className="flex flex-col gap-2">
-                                <label className="text-sm leading-none font-medium">
-                                    Per {meta.containerNoun}{" "}
-                                    <span className="text-muted-foreground font-normal">
-                                        (auto)
-                                    </span>
-                                </label>
-                                <p className="bg-muted/30 flex h-9 items-center rounded-md border px-3 text-sm tabular-nums">
-                                    {autoPerVialLabel}
-                                </p>
-                                <p className="text-muted-foreground text-xs">
-                                    Each vial counts as the BAC water mixed
-                                    into it (set below).
-                                </p>
-                            </div>
-                        ) : (
-                            <FormField
-                                control={form.control}
-                                name="containerSize"
-                                render={({field}) => (
-                                    <FormItem>
-                                        <FormLabel>
-                                            Per {meta.containerNoun}
-                                        </FormLabel>
-                                        <div className="relative">
+                    {fields.length === 0 && (
+                        <p className="text-muted-foreground rounded-lg border border-dashed px-3 py-4 text-center text-xs">
+                            No inventory lots yet. Add one to track stock and how
+                            long it will last.
+                        </p>
+                    )}
+
+                    {fields.map((field, index) => {
+                        const lot = inventoryLots[index] ?? field;
+                        const vials = parseDecimalInput(lot.vialCount) ?? 0;
+                        const content = parseDecimalInput(lot.contentAmount) ?? 0;
+                        const price = parseDecimalInput(lot.pricePerContainer);
+                        const total = vials > 0 && content > 0 ? vials * content : 0;
+                        const lotPrice =
+                            price !== undefined && price >= 0 && vials > 0
+                                ? vials * price
+                                : null;
+                        return (
+                            <div
+                                key={field.id}
+                                className="bg-muted/20 flex flex-col gap-3 rounded-lg border p-3"
+                            >
+                                <div className="flex items-start justify-between gap-2">
+                                    <div className="min-w-0">
+                                        <p className="text-sm font-medium">
+                                            Lot {index + 1}
+                                        </p>
+                                        <p className="text-muted-foreground text-xs tabular-nums">
+                                            {vials > 0 && content > 0
+                                                ? `${formatNumber(vials)} × ${formatAmount(content, lot.contentUnit)} = ${formatAmount(total, lot.contentUnit)}`
+                                                : "Enter containers and their content."}
+                                        </p>
+                                        {lotPrice !== null && (
+                                            <p className="text-muted-foreground text-xs tabular-nums">
+                                                Lot value {formatPrice(lotPrice)}
+                                            </p>
+                                        )}
+                                    </div>
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="icon"
+                                        className="size-7 shrink-0"
+                                        onClick={() => remove(index)}
+                                        aria-label={`Remove inventory lot ${index + 1}`}
+                                    >
+                                        <Trash2 className="size-3.5" aria-hidden/>
+                                    </Button>
+                                </div>
+
+                                <div className="grid gap-3 sm:grid-cols-3">
+                                    <FormField
+                                        control={form.control}
+                                        name={`inventoryLots.${index}.vialCount`}
+                                        render={({field: rowField}) => (
+                                            <FormItem>
+                                                <FormLabel className="text-xs">
+                                                    Number of {containerLabel.toLowerCase()}
+                                                </FormLabel>
+                                                <FormControl>
+                                                    <Input
+                                                        inputMode="numeric"
+                                                        placeholder="1"
+                                                        className="tabular-nums"
+                                                        {...rowField}
+                                                    />
+                                                </FormControl>
+                                                <FormMessage/>
+                                            </FormItem>
+                                        )}
+                                    />
+                                    <FormField
+                                        control={form.control}
+                                        name={`inventoryLots.${index}.contentAmount`}
+                                        render={({field: rowField}) => (
+                                            <FormItem>
+                                                <FormLabel className="text-xs">
+                                                    Content per {meta.containerNoun}
+                                                </FormLabel>
+                                                <FormControl>
+                                                    <Input
+                                                        inputMode="decimal"
+                                                        placeholder="5"
+                                                        className="tabular-nums"
+                                                        {...rowField}
+                                                    />
+                                                </FormControl>
+                                                <FormMessage/>
+                                            </FormItem>
+                                        )}
+                                    />
+                                    <FormField
+                                        control={form.control}
+                                        name={`inventoryLots.${index}.contentUnit`}
+                                        render={({field: rowField}) => (
+                                            <FormItem>
+                                                <FormLabel className="text-xs">
+                                                    Content unit
+                                                </FormLabel>
+                                                <Select
+                                                    onValueChange={rowField.onChange}
+                                                    value={rowField.value}
+                                                >
+                                                    <FormControl>
+                                                        <SelectTrigger className="w-full">
+                                                            <SelectValue/>
+                                                        </SelectTrigger>
+                                                    </FormControl>
+                                                    <SelectContent>
+                                                        {DOSE_UNITS.map((value) => (
+                                                            <SelectItem key={value} value={value}>
+                                                                {doseUnitLabel(value)}
+                                                            </SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
+                                                <FormMessage/>
+                                            </FormItem>
+                                        )}
+                                    />
+                                </div>
+
+                                <div className="grid gap-3 sm:grid-cols-2">
+                                    <FormField
+                                        control={form.control}
+                                        name={`inventoryLots.${index}.orderDate`}
+                                        render={({field: rowField}) => (
+                                            <FormItem>
+                                                <FormLabel className="text-xs">
+                                                    Order date{" "}
+                                                    <span className="text-muted-foreground font-normal">
+                                                        (optional)
+                                                    </span>
+                                                </FormLabel>
+                                                <FormControl>
+                                                    <Input
+                                                        type="date"
+                                                        className="tabular-nums"
+                                                        {...rowField}
+                                                    />
+                                                </FormControl>
+                                                <FormMessage/>
+                                            </FormItem>
+                                        )}
+                                    />
+                                    <FormField
+                                        control={form.control}
+                                        name={`inventoryLots.${index}.deliveryDate`}
+                                        render={({field: rowField}) => (
+                                            <FormItem>
+                                                <FormLabel className="text-xs">
+                                                    Delivery date{" "}
+                                                    <span className="text-muted-foreground font-normal">
+                                                        (optional)
+                                                    </span>
+                                                </FormLabel>
+                                                <FormControl>
+                                                    <Input
+                                                        type="date"
+                                                        className="tabular-nums"
+                                                        {...rowField}
+                                                    />
+                                                </FormControl>
+                                                <FormMessage/>
+                                            </FormItem>
+                                        )}
+                                    />
+                                </div>
+
+                                <FormField
+                                    control={form.control}
+                                    name={`inventoryLots.${index}.vendor`}
+                                    render={({field: rowField}) => (
+                                        <FormItem>
+                                            <FormLabel className="text-xs">
+                                                Vendor{" "}
+                                                <span className="text-muted-foreground font-normal">
+                                                    (optional)
+                                                </span>
+                                            </FormLabel>
                                             <FormControl>
                                                 <Input
-                                                    inputMode="decimal"
-                                                    placeholder="5"
-                                                    className="pr-14"
-                                                    {...field}
+                                                    placeholder="Vendor / supplier, batch info…"
+                                                    {...rowField}
                                                 />
                                             </FormControl>
-                                            <Suffix unit={unit ?? ""}/>
-                                        </div>
-                                        <FormDescription>
-                                            Total stock is {meta.containerNoun}s on
-                                            hand × this amount
-                                            {reconstituted
-                                                ? " — also the peptide mass per vial for reconstitution."
-                                                : "."}
-                                        </FormDescription>
-                                        <FormMessage/>
-                                    </FormItem>
-                                )}
-                            />
-                        )}
+                                            <FormMessage/>
+                                        </FormItem>
+                                    )}
+                                />
 
-                        <FormField
-                            control={form.control}
-                            name="lowStockThreshold"
-                            render={({field}) => (
-                                <FormItem>
-                                    <FormLabel>
-                                        Low-stock alert at{" "}
-                                        <span className="text-muted-foreground font-normal">
-                                            (optional)
-                                        </span>
-                                    </FormLabel>
-                                    <div className="relative">
-                                        <FormControl>
-                                            <Input
-                                                inputMode="decimal"
-                                                placeholder="1"
-                                                className="pr-14"
-                                                {...field}
-                                            />
-                                        </FormControl>
-                                        <Suffix unit={unit ?? ""}/>
-                                    </div>
-                                    <FormMessage/>
-                                </FormItem>
-                            )}
-                        />
-                    </div>
-                    {stockTotal ? (
+                                <FormField
+                                    control={form.control}
+                                    name={`inventoryLots.${index}.pricePerContainer`}
+                                    render={({field: rowField}) => (
+                                        <FormItem>
+                                            <FormLabel className="text-xs">
+                                                Price per {meta.containerNoun}{" "}
+                                                <span className="text-muted-foreground font-normal">
+                                                    (optional)
+                                                </span>
+                                            </FormLabel>
+                                            <div className="relative">
+                                                <FormControl>
+                                                    <Input
+                                                        inputMode="decimal"
+                                                        placeholder="29.99"
+                                                        className="pr-8 tabular-nums"
+                                                        {...rowField}
+                                                    />
+                                                </FormControl>
+                                                <span
+                                                    className="text-muted-foreground pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs">
+                                                    $
+                                                </span>
+                                            </div>
+                                            <FormDescription className="text-xs">
+                                                USD per {meta.containerNoun}, not per content
+                                                unit.
+                                            </FormDescription>
+                                            <FormMessage/>
+                                        </FormItem>
+                                    )}
+                                />
+
+                                <FormField
+                                    control={form.control}
+                                    name={`inventoryLots.${index}.coaUrlsText`}
+                                    render={({field: rowField}) => (
+                                        <FormItem>
+                                            <FormLabel className="text-xs">
+                                                COA links{" "}
+                                                <span className="text-muted-foreground font-normal">
+                                                    (optional)
+                                                </span>
+                                            </FormLabel>
+                                            <FormControl>
+                                                <Textarea
+                                                    rows={2}
+                                                    placeholder="https://example.com/coa.pdf (one per line)"
+                                                    className="resize-none text-xs"
+                                                    {...rowField}
+                                                />
+                                            </FormControl>
+                                            <FormMessage/>
+                                        </FormItem>
+                                    )}
+                                />
+
+                                <FormField
+                                    control={form.control}
+                                    name={`inventoryLots.${index}.notes`}
+                                    render={({field: rowField}) => (
+                                        <FormItem>
+                                            <FormLabel className="text-xs">
+                                                Lot note{" "}
+                                                <span className="text-muted-foreground font-normal">
+                                                    (optional)
+                                                </span>
+                                            </FormLabel>
+                                            <FormControl>
+                                                <Input
+                                                    placeholder="Batch, storage, appearance…"
+                                                    {...rowField}
+                                                />
+                                            </FormControl>
+                                            <FormMessage/>
+                                        </FormItem>
+                                    )}
+                                />
+                            </div>
+                        );
+                    })}
+
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="self-start"
+                        onClick={() => append(newInventoryLotFormValues(unit))}
+                    >
+                        <Plus className="size-4" aria-hidden/>
+                        Add inventory lot
+                    </Button>
+
+                    <FormField
+                        control={form.control}
+                        name="lowStockThreshold"
+                        render={({field}) => (
+                            <FormItem className="sm:max-w-xs">
+                                <FormLabel>
+                                    Low-stock alert at{" "}
+                                    <span className="text-muted-foreground font-normal">
+                                        (optional)
+                                    </span>
+                                </FormLabel>
+                                <div className="relative">
+                                    <FormControl>
+                                        <Input
+                                            inputMode="decimal"
+                                            placeholder="1"
+                                            className="pr-14"
+                                            {...field}
+                                        />
+                                    </FormControl>
+                                    <Suffix unit={unit ?? ""}/>
+                                </div>
+                                <FormMessage/>
+                            </FormItem>
+                        )}
+                    />
+
+                    {stockPreview.quantity > 0 ? (
                         <p className="bg-muted/30 rounded-lg border px-3 py-2.5 text-xs">
                             <span className="font-medium">Total stock</span>{" "}
                             <span className="tabular-nums font-medium">
-                                {formatAmount(stockTotal.total, unit)}
+                                {formatAmount(stockPreview.quantity, unit)}
                             </span>
                             {stockConversion && (
                                 <span className="text-muted-foreground">
@@ -463,17 +693,42 @@ function MedicationForm({medication, schedules, onSaved, onCancel}: MedicationFo
                             )}
                             <span className="text-muted-foreground">
                                 {" "}
-                                · {stockTotal.vials}{" "}
-                                {stockTotal.vials === 1
+                                · {formatNumber(stockPreview.vials)}{" "}
+                                {stockPreview.vials === 1
                                     ? meta.containerNoun
                                     : `${meta.containerNoun}s`}{" "}
-                                × {formatAmount(stockTotal.perVial, unit)}
+                                across {stockPreview.lots}{" "}
+                                {stockPreview.lots === 1 ? "lot" : "lots"}
                             </span>
                         </p>
                     ) : (
                         <p className="text-muted-foreground text-xs">
-                            Total stock is calculated from {meta.containerNoun}s
-                            on hand × the amount per {meta.containerNoun}.
+                            Total stock appears here once a lot has containers and
+                            content.
+                        </p>
+                    )}
+                    {stockPreview.unconvertible > 0 && (
+                        <p className="text-amber-600 dark:text-amber-400 inline-flex items-start gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs">
+                            <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden/>
+                            {stockPreview.unconvertible}{" "}
+                            {stockPreview.unconvertible === 1 ? "lot uses" : "lots use"}{" "}
+                            a content unit that can’t be expressed in {unit}. Those
+                            lots are excluded from the total and duration.
+                        </p>
+                    )}
+                    {stockPreview.pricedLots > 0 && (
+                        <p className="bg-muted/30 rounded-lg border px-3 py-2.5 text-xs">
+                            <span className="font-medium">Total price</span>{" "}
+                            <span className="tabular-nums font-medium">
+                                {formatPrice(stockPreview.price)}
+                            </span>
+                            <span className="text-muted-foreground">
+                                {" "}
+                                · {stockPreview.pricedLots}{" "}
+                                {stockPreview.pricedLots === 1 ? "priced lot" : "priced lots"}
+                                {stockPreview.lots > stockPreview.pricedLots &&
+                                    ` · ${stockPreview.lots - stockPreview.pricedLots} unpriced excluded`}
+                            </span>
                         </p>
                     )}
                 </fieldset>
@@ -502,7 +757,12 @@ function MedicationForm({medication, schedules, onSaved, onCancel}: MedicationFo
                                         <FormControl>
                                             <Switch
                                                 checked={field.value}
-                                                onCheckedChange={field.onChange}
+                                                onCheckedChange={(checked) =>
+                                                    handleReconstitutionToggle(
+                                                        checked,
+                                                        field.onChange
+                                                    )
+                                                }
                                             />
                                         </FormControl>
                                     </FormItem>
@@ -512,88 +772,73 @@ function MedicationForm({medication, schedules, onSaved, onCancel}: MedicationFo
                             {hasReconstitution && (
                                 <>
                                     <div className="grid gap-4 sm:grid-cols-2">
-                                        {vialSizedByWater ? (
-                                            <FormField
-                                                control={form.control}
-                                                name="vialQuantity"
-                                                render={({field}) => (
-                                                    <FormItem>
-                                                        <FormLabel>Peptide per vial</FormLabel>
-                                                        <div className="flex gap-2">
-                                                            <div className="relative flex-1">
-                                                                <FormControl>
-                                                                    <Input
-                                                                        inputMode="decimal"
-                                                                        placeholder="5"
-                                                                        className="pr-12"
-                                                                        {...field}
-                                                                    />
-                                                                </FormControl>
-                                                                <Suffix
-                                                                    unit={
-                                                                        vialQuantityUnit ?? "mg"
-                                                                    }
+                                        <FormField
+                                            control={form.control}
+                                            name="vialQuantity"
+                                            render={({field}) => (
+                                                <FormItem>
+                                                    <FormLabel>Peptide per vial</FormLabel>
+                                                    <div className="flex gap-2">
+                                                        <div className="relative flex-1">
+                                                            <FormControl>
+                                                                <Input
+                                                                    inputMode="decimal"
+                                                                    placeholder="5"
+                                                                    className="pr-12"
+                                                                    {...field}
                                                                 />
-                                                            </div>
-                                                            <FormField
-                                                                control={form.control}
-                                                                name="vialQuantityUnit"
-                                                                render={({
-                                                                             field: unitField,
-                                                                         }) => (
-                                                                    <Select
-                                                                        onValueChange={
-                                                                            unitField.onChange
-                                                                        }
-                                                                        value={unitField.value}
-                                                                    >
-                                                                        <FormControl>
-                                                                            <SelectTrigger
-                                                                                className="w-[4.5rem]"
-                                                                                aria-label="Vial quantity unit"
-                                                                            >
-                                                                                <SelectValue/>
-                                                                            </SelectTrigger>
-                                                                        </FormControl>
-                                                                        <SelectContent>
-                                                                            {MASS_UNITS.map(
-                                                                                (value) => (
-                                                                                    <SelectItem
-                                                                                        key={
-                                                                                            value
-                                                                                        }
-                                                                                        value={
-                                                                                            value
-                                                                                        }
-                                                                                    >
-                                                                                        {value}
-                                                                                    </SelectItem>
-                                                                                )
-                                                                            )}
-                                                                        </SelectContent>
-                                                                    </Select>
-                                                                )}
+                                                            </FormControl>
+                                                            <Suffix
+                                                                unit={
+                                                                    vialQuantityUnit ?? "mg"
+                                                                }
                                                             />
                                                         </div>
-                                                        <FormMessage/>
-                                                    </FormItem>
-                                                )}
-                                            />
-                                        ) : (
-                                            <div className="flex flex-col gap-2">
-                                                <label className="text-sm leading-none font-medium">
-                                                    Peptide per vial
-                                                </label>
-                                                <p className="bg-muted/30 flex h-9 items-center rounded-md border px-3 text-sm tabular-nums">
-                                                    {perVialEcho}
-                                                </p>
-                                                <p className="text-muted-foreground text-xs">
-                                                    Taken from the per-vial amount
-                                                    in Inventory — no need to
-                                                    retype it.
-                                                </p>
-                                            </div>
-                                        )}
+                                                        <FormField
+                                                            control={form.control}
+                                                            name="vialQuantityUnit"
+                                                            render={({
+                                                                         field: unitField,
+                                                                     }) => (
+                                                                <Select
+                                                                    onValueChange={
+                                                                        unitField.onChange
+                                                                    }
+                                                                    value={unitField.value}
+                                                                >
+                                                                    <FormControl>
+                                                                        <SelectTrigger
+                                                                            className="w-[4.5rem]"
+                                                                            aria-label="Vial quantity unit"
+                                                                        >
+                                                                            <SelectValue/>
+                                                                        </SelectTrigger>
+                                                                    </FormControl>
+                                                                    <SelectContent>
+                                                                        {MASS_UNITS.map(
+                                                                            (value) => (
+                                                                                <SelectItem
+                                                                                    key={value}
+                                                                                    value={value}
+                                                                                >
+                                                                                    {value}
+                                                                                </SelectItem>
+                                                                            )
+                                                                        )}
+                                                                    </SelectContent>
+                                                                </Select>
+                                                            )}
+                                                        />
+                                                    </div>
+                                                    <FormDescription className="text-xs">
+                                                        Mass of peptide in one
+                                                        vial — independent of how
+                                                        many lots you stock.
+                                                    </FormDescription>
+                                                    <FormMessage/>
+                                                </FormItem>
+                                            )}
+                                        />
 
                                         <FormField
                                             control={form.control}
@@ -612,10 +857,10 @@ function MedicationForm({medication, schedules, onSaved, onCancel}: MedicationFo
                                                         </FormControl>
                                                         <Suffix unit="mL"/>
                                                     </div>
-                                                    <FormDescription>
-                                                        {vialSizedByWater
-                                                            ? "Bacteriostatic water mixed into each vial — also sets each vial's stock volume."
-                                                            : "Bacteriostatic water mixed into each vial — combined with the per-vial amount above."}
+                                                    <FormDescription className="text-xs">
+                                                        Bacteriostatic water mixed into each
+                                                        vial — combined with the peptide mass
+                                                        above.
                                                     </FormDescription>
                                                     <FormMessage/>
                                                 </FormItem>

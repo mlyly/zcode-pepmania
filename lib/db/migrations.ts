@@ -10,7 +10,7 @@
  * wired up in `migration-manager.ts`.
  */
 import type {PepDatabase} from "./database";
-import type {Medication, MedicationType, Schedule, Weekday} from "./types";
+import type {InventoryLot, Medication, MedicationType, Schedule, Weekday} from "./types";
 
 export interface Migration {
     version: number;
@@ -30,7 +30,7 @@ export interface SchemaVersion {
     stores: Record<string, string>;
 }
 
-export const LATEST_SCHEMA_VERSION = 5;
+export const LATEST_SCHEMA_VERSION = 7;
 
 /**
  * Index declarations. Primary keys (`id`) are non-indexed UUIDs; other fields
@@ -83,6 +83,19 @@ export const SCHEMA_VERSIONS: SchemaVersion[] = [
         // Additive, non-indexed — absent ≡ "numeric", so existing rows and
         // re-imported payloads validate unchanged.
         version: 5,
+        stores: {},
+    },
+    {
+        // v6 replaces the single aggregate `inventory` object with a list of
+        // stock lots (vials × content per vial, order/delivery dates, vendor,
+        // COA links and notes). Nested data needs no index changes.
+        version: 6,
+        stores: {},
+    },
+    {
+        // v7 adds an optional `pricePerContainer` to each inventory lot. It is
+        // additive and non-indexed, so no store map changes are needed.
+        version: 7,
         stores: {},
     },
 ];
@@ -152,6 +165,97 @@ function formatLocalDateParts(parts: LocalDateParts): string {
 /** Calendar weekday (0 = Sunday … 6 = Saturday) of local date parts. */
 function weekdayOfParts(parts: LocalDateParts): Weekday {
     return new Date(parts.year, parts.month - 1, parts.day).getDay() as Weekday;
+}
+
+// ---------------------------------------------------------------------------
+// v6 helpers (frozen — migrations must never import from living domain code)
+// ---------------------------------------------------------------------------
+
+const DOSE_UNIT_VALUES_V6 = ["mg", "mcg", "IU", "mL", "pcs"] as const;
+type DoseUnitV6 = (typeof DOSE_UNIT_VALUES_V6)[number];
+const MASS_UNIT_VALUES_V6 = ["mg", "mcg", "IU"] as const;
+type MassUnitV6 = (typeof MASS_UNIT_VALUES_V6)[number];
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+    return value !== null && typeof value === "object" && !Array.isArray(value)
+        ? (value as Record<string, unknown>)
+        : null;
+}
+
+function finiteNumber(value: unknown): number | undefined {
+    const number = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+    return Number.isFinite(number) ? number : undefined;
+}
+
+function positiveNumber(value: unknown): number | undefined {
+    const number = finiteNumber(value);
+    return number !== undefined && number > 0 ? number : undefined;
+}
+
+function isDoseUnitV6(value: unknown): value is DoseUnitV6 {
+    return typeof value === "string" && (DOSE_UNIT_VALUES_V6 as readonly string[]).includes(value);
+}
+
+function isMassUnitV6(value: unknown): value is MassUnitV6 {
+    return typeof value === "string" && (MASS_UNIT_VALUES_V6 as readonly string[]).includes(value);
+}
+
+/**
+ * Folds the pre-v6 single inventory object into one lot. Existing v6 rows
+ * (already carrying a `lots` array) pass through untouched, which keeps the
+ * migration idempotent after a crash.
+ */
+function migrateInventoryV6(record: Record<string, unknown>, fallbackId: string): void {
+    const rawInventory = asRecord(record.inventory);
+    if (!rawInventory) {
+        record.inventory = {lots: []};
+        return;
+    }
+    if (Array.isArray(rawInventory.lots)) return; // already migrated
+
+    const unit: DoseUnitV6 = isDoseUnitV6(record.unit) ? record.unit : "mg";
+    let vialCount = Math.max(0, Math.trunc(finiteNumber(rawInventory.vialCount) ?? 0));
+    const currentQuantity = positiveNumber(rawInventory.currentQuantity);
+
+    let contentAmount = positiveNumber(rawInventory.containerSize);
+    let contentUnit: DoseUnitV6 = unit;
+
+    // Volume-dosed peptides stored BAC water as the container size; the more
+    // useful lot description is the peptide mass per vial from reconstitution.
+    const reconstitution = asRecord(record.reconstitution);
+    const reconQuantity = positiveNumber(reconstitution?.vialQuantity);
+    if (unit === "mL" && reconQuantity !== undefined && isMassUnitV6(reconstitution?.vialQuantityUnit)) {
+        contentAmount = reconQuantity;
+        contentUnit = reconstitution!.vialQuantityUnit as MassUnitV6;
+    }
+
+    if (contentAmount === undefined && currentQuantity !== undefined) {
+        contentAmount = vialCount > 0 ? currentQuantity / vialCount : currentQuantity;
+        if (vialCount === 0) vialCount = 1;
+    }
+    if (vialCount === 0 && currentQuantity !== undefined) {
+        // Legacy rows without a container size tracked an absolute total.
+        vialCount = 1;
+    }
+
+    const lowStockThreshold = finiteNumber(rawInventory.lowStockThreshold);
+    const lots: InventoryLot[] = [];
+    if (vialCount > 0 && contentAmount !== undefined && contentAmount > 0) {
+        const medicationId = typeof record.id === "string" && record.id ? record.id : fallbackId;
+        lots.push({
+            id: `${medicationId}-legacy-lot`,
+            vialCount,
+            contentAmount,
+            contentUnit,
+        });
+    }
+
+    record.inventory = {
+        lots,
+        ...(lowStockThreshold !== undefined && lowStockThreshold >= 0
+            ? {lowStockThreshold}
+            : {}),
+    };
 }
 
 /**
@@ -286,6 +390,49 @@ export const MIGRATIONS: Migration[] = [
         upSnapshot: () => {
             // Additive optional field: import payloads from older versions are
             // accepted as-is (absent `valueKind` ≡ "numeric").
+        },
+    },
+    {
+        version: 6,
+        description:
+            "Inventory lots: the single aggregate inventory becomes a list of " +
+            "lots (vials × content per vial, order/delivery dates, vendor, COA " +
+            "links, notes). Legacy totals are folded into one synthetic lot.",
+        up: async (target) => {
+            const database = target as PepDatabase;
+            await database.transaction("rw", database.medications, async () => {
+                const medications = await database.medications.toArray();
+                for (const medication of medications) {
+                    const record = medication as unknown as Record<string, unknown>;
+                    migrateInventoryV6(record, medication.id);
+                    await database.medications.update(medication.id, {
+                        inventory: record.inventory as Medication["inventory"],
+                    } satisfies Partial<Medication>);
+                }
+            });
+        },
+        upSnapshot: (data) => {
+            const snapshot = data as { medications?: unknown[] };
+            if (!Array.isArray(snapshot.medications)) return;
+            snapshot.medications.forEach((row, index) => {
+                const record = asRecord(row);
+                if (!record) return;
+                migrateInventoryV6(record, `legacy-medication-${index}`);
+            });
+        },
+    },
+    {
+        version: 7,
+        description:
+            "Inventory pricing: each lot gains an optional `pricePerContainer` " +
+            "(USD per vial/container). Additive — existing lots stay valid and " +
+            "are simply unpriced.",
+        up: () => {
+            // Additive optional field: nothing to transform on the live database.
+        },
+        upSnapshot: () => {
+            // Additive optional field: import payloads from older versions are
+            // accepted as-is (absent `pricePerContainer` ≡ unpriced).
         },
     },
 ];

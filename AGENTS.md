@@ -55,14 +55,38 @@ To handle future app updates without breaking user data:
 
 ### 3.1 Medication & Inventory
 
-> **v2 (current):** types are granular (`peptide`/`injection`/`pill`/`liquid`/`supplement`/`other`),
-> dose units include `mL`, and inventory tracks an optional per-container size. The v1 → v2
-> migration (see `lib/db/migrations.ts`) remaps the legacy generic `"medication"` type to `"pill"`
-> and preserves an automatic pre-migration backup.
+> **v2:** types are granular (`peptide`/`injection`/`pill`/`liquid`/`supplement`/`other`),
+> dose units include `mL`, and the v1 → v2 migration (see `lib/db/migrations.ts`) remaps the
+> legacy generic `"medication"` type to `"pill"`, preserving an automatic pre-migration backup.
+>
+> **v6:** the single aggregate inventory becomes a list of purchase/delivery lots.
+> Each lot stores containers on hand, content per container, order/delivery dates, vendor,
+> COA links and notes. Totals are always derived from the lots; the v5 → v6 migration folds
+> the legacy inventory into one synthetic lot.
+>
+> **v7 (current):** each lot gains an optional `pricePerContainer` (USD per vial/container,
+> not per content unit). Lot value = `vialCount × pricePerContainer`; medication value = the
+> sum of priced lots (unpriced lots are excluded). Additive, so the v6 → v7 migration is a
+> no-op.
 
 ```ts
 type MassUnit = "mg" | "mcg" | "IU";
-type DoseUnit = MassUnit | "mL"; // volume — only converts via reconstitution
+type VolumeUnit = "mL";   // only converts via reconstitution
+type CountUnit = "pcs";   // counts; only converts to itself
+type DoseUnit = MassUnit | VolumeUnit | CountUnit;
+
+interface InventoryLot {
+  id: string; // UUID
+  vialCount: number;        // containers/vials/bottles currently on hand
+  contentAmount: number;    // medication amount in one container
+  contentUnit: DoseUnit;    // e.g., mg, mL, pcs
+  orderDate?: string;       // "YYYY-MM-DD"
+  deliveryDate?: string;    // "YYYY-MM-DD"
+  vendor?: string;
+  pricePerContainer?: number; // USD per vial/container (v7)
+  coaUrls?: string[];       // http(s) certificate-of-analysis links
+  notes?: string;
+}
 
 interface Medication {
     id: string; // UUID
@@ -72,17 +96,15 @@ interface Medication {
 
   // Reconstitution Info (peptides only; linked to active schedules for dose volumes)
     reconstitution?: {
-        vialQuantity: number;      // e.g., 5 (mg)
+      vialQuantity: number;      // explicit vial mass, e.g., 5 (mg)
       vialQuantityUnit: MassUnit;
       bacWaterAmountMl: number;  // e.g., 2 (ml) → concentration 2.5 mg/mL
     };
 
-    // Inventory Tracking
+  // Inventory Tracking — totals derived from the lots
     inventory: {
-        currentQuantity: number; // In selected unit (e.g., mg)
-      vialCount: number;       // vials / bottles / packs on hand
-      containerSize?: number;  // amount per container (unit size), in `unit`
-        lowStockThreshold?: number;
+      lots: InventoryLot[];
+      lowStockThreshold?: number; // in `unit`
     };
 
     halfLifeHours?: number; // For concentration model (e.g., 168 hours for 7 days)
@@ -99,7 +121,7 @@ interface Schedule {
     id: string;
     medicationId: string;
     doseAmount: number;
-    unit: 'mg' | 'mcg' | 'IU';
+  unit: DoseUnit;
     frequencyType: 'daily' | 'weekly' | 'custom_interval';
     intervalDays?: number; // Used if frequencyType === 'custom_interval'
     timeOfDay: string; // "HH:MM"
@@ -112,7 +134,7 @@ interface DoseLog {
     medicationId: string;
     scheduleId?: string; // Optional reference if logged from a schedule
     doseAmount: number;
-    unit: 'mg' | 'mcg' | 'IU';
+  unit: DoseUnit;
     timestamp: string; // ISO Date String
   // v4: optional injection site (e.g. "Abdomen") — free text; the form
   // offers presets plus an "other" free-text field.
@@ -123,7 +145,7 @@ interface DoseLog {
 
 ### 3.3 Body Measurements
 
-> **v5 (current):** measurement types gain an optional `valueKind`
+> **v5:** measurement types gain an optional `valueKind`
 > (`"numeric" | "blood_pressure"`; absent ≡ numeric). The two built-in
 > trackers (Weight, Blood Pressure — fixed ids, not deletable, kind locked)
 > are seeded idempotently by `lib/measurements/service.ts`; a BP reading is
