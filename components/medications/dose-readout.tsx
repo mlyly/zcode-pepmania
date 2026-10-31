@@ -2,7 +2,7 @@
 
 import type {DoseUnit, Medication} from "@/lib/db/types";
 import {doseVolumeMl} from "@/lib/medications/derived";
-import {formatAmount, formatNumber, mlToSyringeUnits} from "@/lib/units";
+import {formatAmount, formatNumber, mlToWholeSyringeUnits} from "@/lib/units";
 import {cn} from "@/lib/utils";
 
 import {SyringeMeter} from "./syringe-meter";
@@ -76,7 +76,7 @@ export function DoseReadout({
                 </>
             )}
             <span className="text-muted-foreground">
-                {formatNumber(volume)} mL · {formatNumber(mlToSyringeUnits(volume))} U
+                {formatNumber(volume)} mL · {mlToWholeSyringeUnits(volume)} U
             </span>
         </span>
     );

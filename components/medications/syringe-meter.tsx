@@ -1,7 +1,7 @@
 "use client";
 
 import {cn} from "@/lib/utils";
-import {formatNumber, mlToSyringeUnits} from "@/lib/units";
+import {formatNumber, mlToWholeSyringeUnits} from "@/lib/units";
 
 interface SyringeMeterProps {
     /** Dose volume to visualize. */
@@ -17,10 +17,10 @@ interface SyringeMeterProps {
  * marker and switch to a warning tint.
  */
 export function SyringeMeter({ml, capacityMl = 1, className}: SyringeMeterProps) {
-    const units = mlToSyringeUnits(ml);
+    const units = mlToWholeSyringeUnits(ml);
     const overCapacity = ml > capacityMl;
     const ratio = Math.min(1, Math.max(0, ml / capacityMl));
-    const label = `${formatNumber(ml)} mL · ${formatNumber(units)} U`;
+    const label = `${formatNumber(ml)} mL · ${units} U`;
 
     return (
         <span

@@ -52,7 +52,7 @@ import {
     deleteMedication,
     updateMedication,
 } from "../lib/medications/service";
-import {convertUnit, mlToSyringeUnits} from "../lib/units";
+import {convertUnit, mlToSyringeUnits, mlToWholeSyringeUnits} from "../lib/units";
 
 let failed = false;
 
@@ -249,6 +249,9 @@ async function main() {
     check("pcs only converts to itself", convertUnit(5, "pcs", "pcs")?.value === 5 &&
         convertUnit(5, "pcs", "mg") === null);
     check("0.1 mL = 10 U-100 units", mlToSyringeUnits(0.1) === 10);
+    check("displayed units round up", mlToWholeSyringeUnits(0.105) === 11);
+    check("displayed units keep whole values", mlToWholeSyringeUnits(0.1) === 10);
+    check("float noise does not bump the displayed units", mlToWholeSyringeUnits(0.07) === 7);
 
     // --------------------------------------------------------- service
     await db.medications.clear();

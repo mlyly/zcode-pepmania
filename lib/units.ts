@@ -72,6 +72,15 @@ export function mlToSyringeUnits(ml: number): number {
     return ml * UNITS_PER_ML;
 }
 
+/**
+ * Syringe marks as drawn on a U-100 syringe: whole units, rounded up (a
+ * partial mark is drawn by advancing to the next tick). Float noise is
+ * trimmed first so e.g. 0.07 mL shows 7 U, not 8 U.
+ */
+export function mlToWholeSyringeUnits(ml: number): number {
+    return Math.ceil(roundAmount(mlToSyringeUnits(ml)));
+}
+
 /** Trims float noise (e.g. 0.30000000000000004) for storage/display. */
 export function roundAmount(value: number, fractionDigits = 6): number {
     const factor = 10 ** fractionDigits;
