@@ -76,6 +76,19 @@ export function roundAmount(value: number, fractionDigits = 6): number {
     return Math.round(value * factor) / factor;
 }
 
+/**
+ * Parses a user-entered decimal number. Accepts both "." and "," as the
+ * decimal separator (e.g. "2,5" → 2.5), so locale keyboards work as-is.
+ * Returns `undefined` for blank or non-numeric input.
+ */
+export function parseDecimalInput(raw: string): number | undefined {
+    const trimmed = raw.trim();
+    if (trimmed === "") return undefined;
+    // Treat commas as decimal separators instead of rejecting the entry.
+    const value = Number(trimmed.replace(/,/g, "."));
+    return Number.isFinite(value) ? value : undefined;
+}
+
 const amountFormatter = new Intl.NumberFormat(undefined, {
     maximumFractionDigits: 3,
 });

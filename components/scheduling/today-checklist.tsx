@@ -19,7 +19,7 @@ import {formatClockTime, formatDay} from "@/lib/scheduling/dates";
 import {prefilledDoseAmount} from "@/lib/scheduling/derived";
 import {dayOccurrences, matchingDoseLog, missedOccurrences, type Occurrence,} from "@/lib/scheduling/occurrences";
 import {deleteDoseLog, logDose, logDoses} from "@/lib/scheduling/service";
-import {formatAmount} from "@/lib/units";
+import {formatAmount, parseDecimalInput} from "@/lib/units";
 import {cn} from "@/lib/utils";
 
 import type {TrackerData} from "./use-tracker-data";
@@ -537,12 +537,12 @@ function AdHocDoseForm({data, busy, onLogged, onOpenChange}: AdHocDoseFormProps)
     };
 
     const submit = async () => {
-        const doseAmount = Number(amount.trim());
+        const doseAmount = parseDecimalInput(amount);
         if (!selected) {
             setError("Choose a medication.");
             return;
         }
-        if (!Number.isFinite(doseAmount) || doseAmount <= 0) {
+        if (doseAmount === undefined || doseAmount <= 0) {
             setError("Enter a dose greater than zero.");
             return;
         }

@@ -14,7 +14,7 @@
 import {z} from "zod";
 
 import type {Medication} from "@/lib/db/types";
-import {convertUnit, isMassUnit, roundAmount} from "@/lib/units";
+import {convertUnit, isMassUnit, parseDecimalInput, roundAmount} from "@/lib/units";
 import {DOSE_UNITS, MASS_UNITS, MEDICATION_TYPES} from "./constants";
 
 // ---------------------------------------------------------------------------
@@ -162,8 +162,8 @@ function checkNumeric(
         }
         return;
     }
-    const value = Number(trimmed);
-    if (!Number.isFinite(value)) {
+    const value = parseDecimalInput(trimmed);
+    if (value === undefined) {
         ctx.addIssue({
             code: "custom",
             path: [path],
@@ -210,10 +210,7 @@ function checkNumeric(
 
 /** Parses a validated form string into a number (`""` → undefined). */
 function parseFormNumber(raw: string): number | undefined {
-    const trimmed = raw.trim();
-    if (trimmed === "") return undefined;
-    const value = Number(trimmed);
-    return Number.isFinite(value) ? value : undefined;
+    return parseDecimalInput(raw);
 }
 
 /**

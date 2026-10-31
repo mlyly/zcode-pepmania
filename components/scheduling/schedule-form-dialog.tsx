@@ -25,6 +25,7 @@ import {
     toScheduleInput,
 } from "@/lib/scheduling/schema";
 import {createSchedule, updateSchedule} from "@/lib/scheduling/service";
+import {parseDecimalInput} from "@/lib/units";
 
 import {Button} from "@/components/ui/button";
 import {Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle} from "@/components/ui/dialog";
@@ -57,11 +58,11 @@ function draftSchedule(values: ScheduleFormValues): Schedule {
     return {
         id: "preview",
         medicationId: values.medicationId,
-        doseAmount: Number(values.doseAmount.trim()) || 0,
+        doseAmount: parseDecimalInput(values.doseAmount) ?? 0,
         unit: values.unit,
         frequencyType: values.frequencyType,
         weekdays: WEEKDAYS.filter((_, index) => values.weekdays[index]),
-        intervalDays: Number(values.intervalDays.trim()) || undefined,
+        intervalDays: parseDecimalInput(values.intervalDays),
         timeOfDay,
         startDate: /^\d{4}-\d{2}-\d{2}$/.test(rawStart) ? rawStart : dateOnlyIso(new Date()),
         active: true,

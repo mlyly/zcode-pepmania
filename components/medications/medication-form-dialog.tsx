@@ -20,7 +20,15 @@ import {
     toMedicationInput,
 } from "@/lib/medications/schema";
 import {createMedication, updateMedication} from "@/lib/medications/service";
-import {convertUnit, formatAmount, formatNumber, isMassUnit, IU_FALLBACK_WARNING, roundAmount,} from "@/lib/units";
+import {
+    convertUnit,
+    formatAmount,
+    formatNumber,
+    isMassUnit,
+    IU_FALLBACK_WARNING,
+    parseDecimalInput,
+    roundAmount,
+} from "@/lib/units";
 
 import {Button} from "@/components/ui/button";
 import {Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,} from "@/components/ui/dialog";
@@ -64,10 +72,10 @@ function computedStockTotal(
     vialCountRaw: string,
     perVialRaw: string
 ): { vials: number; perVial: number; total: number } | null {
-    const vials = Number(vialCountRaw.trim());
-    const perVial = Number(perVialRaw.trim());
-    if (!Number.isFinite(vials) || vials < 0) return null;
-    if (!Number.isFinite(perVial) || perVial <= 0) return null;
+    const vials = parseDecimalInput(vialCountRaw);
+    const perVial = parseDecimalInput(perVialRaw);
+    if (vials === undefined || vials < 0) return null;
+    if (perVial === undefined || perVial <= 0) return null;
     return {vials, perVial, total: roundAmount(vials * perVial)};
 }
 
@@ -82,10 +90,10 @@ function buildPreviewMedication(
     bacWaterAmountMl: string,
     unit: DoseUnit
 ): Pick<Medication, "reconstitution" | "unit"> | null {
-    const quantity = Number(vialMass.trim());
-    const water = Number(bacWaterAmountMl.trim());
-    if (!Number.isFinite(quantity) || quantity <= 0) return null;
-    if (!Number.isFinite(water) || water <= 0) return null;
+    const quantity = parseDecimalInput(vialMass);
+    const water = parseDecimalInput(bacWaterAmountMl);
+    if (quantity === undefined || quantity <= 0) return null;
+    if (water === undefined || water <= 0) return null;
     return {
         unit,
         reconstitution: {
@@ -151,16 +159,16 @@ function MedicationForm({medication, schedules, onSaved, onCancel}: MedicationFo
         : null;
 
     // Read-only echo of the BAC-water volume that sizes a vial (mL peptides).
-    const bacWaterMl = Number(bacWaterAmountMl.trim());
+    const bacWaterMl = parseDecimalInput(bacWaterAmountMl);
     const autoPerVialLabel =
-        Number.isFinite(bacWaterMl) && bacWaterMl > 0
+        bacWaterMl !== undefined && bacWaterMl > 0
             ? `${formatNumber(bacWaterMl)} mL`
             : "Set BAC water below";
 
     // Read-only echo of the per-vial amount feeding the concentration math.
-    const perVialAmount = Number(containerSize.trim());
+    const perVialAmount = parseDecimalInput(containerSize);
     const perVialEcho =
-        Number.isFinite(perVialAmount) && perVialAmount > 0
+        perVialAmount !== undefined && perVialAmount > 0
             ? formatAmount(perVialAmount, unit)
             : "Set the per-vial amount above";
 

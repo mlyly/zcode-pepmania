@@ -11,6 +11,7 @@ import {z} from "zod";
 
 import type {MeasurementLog, MeasurementType, MeasurementValueKind} from "@/lib/db/types";
 import {DATETIME_LOCAL_PATTERN, datetimeLocalToIso, isoToDatetimeLocal} from "@/lib/scheduling/dates";
+import {parseDecimalInput} from "@/lib/units";
 import {
     BLOOD_PRESSURE_PATTERN,
     DIASTOLIC_RANGE,
@@ -195,8 +196,8 @@ export const measurementLogFormSchema = z
         if (raw === "") {
             ctx.addIssue({code: "custom", path: ["numericValue"], message: "Value is required"});
         } else {
-            const value = Number(raw);
-            if (!Number.isFinite(value) || value <= 0) {
+            const value = parseDecimalInput(raw);
+            if (value === undefined || value <= 0) {
                 ctx.addIssue({
                     code: "custom",
                     path: ["numericValue"],
@@ -224,10 +225,8 @@ function validateBloodPressureFields(
     value: BloodPressureValue | null;
 } {
     const parse = (raw: string): number | null => {
-        const trimmed = raw.trim();
-        if (trimmed === "") return null;
-        const value = Number(trimmed);
-        return Number.isInteger(value) && value > 0 ? value : null;
+        const value = parseDecimalInput(raw);
+        return value !== undefined && Number.isInteger(value) && value > 0 ? value : null;
     };
     const systolic = parse(systolicRaw);
     const diastolic = parse(diastolicRaw);
@@ -316,8 +315,8 @@ export function resolveMeasurementLogValue(
     values: Pick<MeasurementLogFormValues, "valueKind" | "numericValue" | "systolic" | "diastolic">
 ): ResolvedMeasurementLogValue {
     const numeric =
-        values.valueKind === "numeric" && values.numericValue.trim() !== ""
-            ? Number(values.numericValue.trim())
+        values.valueKind === "numeric"
+            ? (parseDecimalInput(values.numericValue) ?? null)
             : null;
     const pair = validateBloodPressureFields(values.systolic, values.diastolic).value;
     return {

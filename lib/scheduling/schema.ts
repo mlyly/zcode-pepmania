@@ -18,6 +18,7 @@ import {z} from "zod";
 
 import type {DoseLog, DoseUnit, Medication, Schedule, Weekday} from "@/lib/db/types";
 import {DOSE_UNITS} from "@/lib/medications/constants";
+import {parseDecimalInput} from "@/lib/units";
 import {CUSTOM_SITE, INJECTION_SITES, MAX_SITE_LENGTH, UNSPECIFIED_SITE, WEEKDAYS,} from "./constants";
 import {
     DATE_ONLY_PATTERN,
@@ -222,8 +223,8 @@ export const scheduleFormSchema = z
         if (dose === "") {
             ctx.addIssue({code: "custom", path: ["doseAmount"], message: "Dose amount is required"});
         } else {
-            const amount = Number(dose);
-            if (!Number.isFinite(amount) || amount <= 0) {
+            const amount = parseDecimalInput(dose);
+            if (amount === undefined || amount <= 0) {
                 ctx.addIssue({code: "custom", path: ["doseAmount"], message: "Dose must be greater than zero"});
             } else if (amount > 1e9) {
                 ctx.addIssue({code: "custom", path: ["doseAmount"], message: "Dose looks too large"});
@@ -250,8 +251,8 @@ export const scheduleFormSchema = z
                     message: "Required for a custom interval",
                 });
             } else {
-                const interval = Number(raw);
-                if (!Number.isInteger(interval) || interval < 1 || interval > 365) {
+                const interval = parseDecimalInput(raw);
+                if (interval === undefined || !Number.isInteger(interval) || interval < 1 || interval > 365) {
                     ctx.addIssue({
                         code: "custom",
                         path: ["intervalDays"],
@@ -353,10 +354,7 @@ export function scheduleToFormValues(
 
 /** Parses a validated form string into a number (`""` → undefined). */
 function parseFormNumber(raw: string): number | undefined {
-    const trimmed = raw.trim();
-    if (trimmed === "") return undefined;
-    const value = Number(trimmed);
-    return Number.isFinite(value) ? value : undefined;
+    return parseDecimalInput(raw);
 }
 
 /** Converts validated form values into the canonical service input. */
@@ -413,8 +411,8 @@ export const doseLogFormSchema = z
         if (dose === "") {
             ctx.addIssue({code: "custom", path: ["doseAmount"], message: "Dose amount is required"});
         } else {
-            const amount = Number(dose);
-            if (!Number.isFinite(amount) || amount <= 0) {
+            const amount = parseDecimalInput(dose);
+            if (amount === undefined || amount <= 0) {
                 ctx.addIssue({code: "custom", path: ["doseAmount"], message: "Dose must be greater than zero"});
             } else if (amount > 1e9) {
                 ctx.addIssue({code: "custom", path: ["doseAmount"], message: "Dose looks too large"});
